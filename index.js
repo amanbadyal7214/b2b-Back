@@ -7,6 +7,7 @@ dotenv.config();
 
 const userRoutes = require("./Routes/Userroute");
 const adminRoutes = require("./Routes/Adminroute");
+const categoryRoutes = require("./Routes/Categoryroute");
 
 const app = express();
 
@@ -42,6 +43,10 @@ app.use("/api", adminRoutes);
 
 // User Routes
 app.use("/api/users", userRoutes);
+
+// Product Category Routes
+app.use("/api/categories", categoryRoutes);
+app.use("/api/category", categoryRoutes);
 
 // 404 Handler
 app.use((req, res) => {

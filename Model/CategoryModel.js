@@ -28,6 +28,11 @@ const categorySchema = new mongoose.Schema(
       enum: ["Active", "Inactive"],
       default: "Active",
     },
+    productType: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "ProductType",
+      default: null,
+    },
     itemCount: {
       type: Number,
       default: 0,

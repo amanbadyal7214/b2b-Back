@@ -8,6 +8,7 @@ dotenv.config();
 const userRoutes = require("./Routes/Userroute");
 const adminRoutes = require("./Routes/Adminroute");
 const categoryRoutes = require("./Routes/Categoryroute");
+const productTypeRoutes = require("./Routes/ProductTyperoute");
 
 const app = express();
 
@@ -33,6 +34,8 @@ app.get("/", (req, res) => {
       adminAccess: "POST /api/admin-access or POST /api/admin/access",
       adminProfile: "GET /api/admin/profile (Requires Bearer token)",
       users: "POST /api/users/register, POST /api/users/login",
+      categories: "GET, POST, PUT, DELETE /api/categories",
+      productTypes: "GET, POST, PUT, DELETE /api/product-types",
     },
   });
 });
@@ -47,6 +50,10 @@ app.use("/api/users", userRoutes);
 // Product Category Routes
 app.use("/api/categories", categoryRoutes);
 app.use("/api/category", categoryRoutes);
+
+// Product Type Routes
+app.use("/api/product-types", productTypeRoutes);
+app.use("/api/product-type", productTypeRoutes);
 
 // 404 Handler
 app.use((req, res) => {

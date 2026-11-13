@@ -1,4 +1,5 @@
 const Category = require("../Model/CategoryModel");
+const ProductType = require("../Model/ProductTypeModel");
 
 /**
  * Get all product categories
@@ -6,7 +7,9 @@ const Category = require("../Model/CategoryModel");
  */
 exports.getCategories = async (req, res) => {
   try {
-    const categories = await Category.find().sort({ createdAt: -1 });
+    const categories = await Category.find()
+      .populate("productType", "name code status")
+      .sort({ createdAt: -1 });
     return res.status(200).json({
       success: true,
       count: categories.length,
@@ -28,7 +31,7 @@ exports.getCategories = async (req, res) => {
  */
 exports.createCategory = async (req, res) => {
   try {
-    const { name, description, code, status } = req.body;
+    const { name, description, code, status, productType, type } = req.body;
 
     if (!name || !name.trim()) {
       return res.status(400).json({
@@ -51,19 +54,31 @@ exports.createCategory = async (req, res) => {
       });
     }
 
+    // Optional productType resolution
+    let resolvedTypeId = null;
+    const typeIdToLookup = productType || type;
+    if (typeIdToLookup) {
+      const typeExists = await ProductType.findById(typeIdToLookup);
+      if (typeExists) {
+        resolvedTypeId = typeExists._id;
+      }
+    }
+
     const newCategory = new Category({
       name: trimmedName,
       description: description ? description.trim() : "",
       code: code ? code.trim().toUpperCase() : undefined,
       status: status === "Inactive" ? "Inactive" : "Active",
+      productType: resolvedTypeId,
     });
 
     const savedCategory = await newCategory.save();
+    const populated = await savedCategory.populate("productType", "name code status");
 
     return res.status(201).json({
       success: true,
       message: "Category created successfully",
-      category: savedCategory,
+      category: populated,
     });
   } catch (error) {
     console.error("Error creating category:", error);
@@ -82,7 +97,7 @@ exports.createCategory = async (req, res) => {
 exports.updateCategory = async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, description, code, status } = req.body;
+    const { name, description, code, status, productType, type } = req.body;
 
     const category = await Category.findById(id);
     if (!category) {
@@ -103,12 +118,23 @@ exports.updateCategory = async (req, res) => {
     if (code) category.code = code.trim().toUpperCase();
     if (status) category.status = status;
 
+    if (productType !== undefined || type !== undefined) {
+      const typeIdToLookup = productType !== undefined ? productType : type;
+      if (typeIdToLookup) {
+        const typeExists = await ProductType.findById(typeIdToLookup);
+        category.productType = typeExists ? typeExists._id : null;
+      } else {
+        category.productType = null;
+      }
+    }
+
     const updated = await category.save();
+    const populated = await updated.populate("productType", "name code status");
 
     return res.status(200).json({
       success: true,
       message: "Category updated successfully",
-      category: updated,
+      category: populated,
     });
   } catch (error) {
     console.error("Error updating category:", error);

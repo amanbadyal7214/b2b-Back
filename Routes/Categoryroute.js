@@ -6,11 +6,12 @@ const {
   updateCategory,
   deleteCategory,
 } = require("../Controller/Categorycontroller");
+const { upload } = require("../Config/cloudinary");
 
-// Category REST endpoints
+// Category REST endpoints with image upload support
 router.get("/", getCategories);
-router.post("/", createCategory);
-router.put("/:id", updateCategory);
+router.post("/", upload.single("image"), createCategory);
+router.put("/:id", upload.single("image"), updateCategory);
 router.delete("/:id", deleteCategory);
 
 module.exports = router;

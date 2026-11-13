@@ -1,5 +1,6 @@
 const Category = require("../Model/CategoryModel");
 const ProductType = require("../Model/ProductTypeModel");
+const { uploadToCloudinary, deleteFromCloudinary } = require("../Config/cloudinary");
 
 /**
  * Get all product categories
@@ -26,12 +27,12 @@ exports.getCategories = async (req, res) => {
 };
 
 /**
- * Create a new product category
+ * Create a new product category (Supports image upload via Multer or base64/URL)
  * POST /api/categories
  */
 exports.createCategory = async (req, res) => {
   try {
-    const { name, description, code, status, productType, type } = req.body;
+    const { name, description, code, status, productType, type, image } = req.body;
 
     if (!name || !name.trim()) {
       return res.status(400).json({
@@ -64,12 +65,40 @@ exports.createCategory = async (req, res) => {
       }
     }
 
+    // Handle Cloudinary Image Upload
+    let imageUrl = "";
+    let imagePublicId = "";
+
+    // 1. If uploaded as file via multer
+    if (req.file && req.file.buffer) {
+      try {
+        const uploadResult = await uploadToCloudinary(req.file.buffer, "b2b_categories");
+        imageUrl = uploadResult.url;
+        imagePublicId = uploadResult.public_id;
+      } catch (uploadErr) {
+        console.error("Error uploading file to Cloudinary:", uploadErr);
+      }
+    }
+    // 2. If uploaded as base64 data URI or string URL in body
+    else if (image && typeof image === "string" && image.trim()) {
+      try {
+        const uploadResult = await uploadToCloudinary(image.trim(), "b2b_categories");
+        imageUrl = uploadResult.url;
+        imagePublicId = uploadResult.public_id;
+      } catch (uploadErr) {
+        console.error("Error uploading image string to Cloudinary:", uploadErr);
+        imageUrl = image.trim(); // fallback to direct string if given
+      }
+    }
+
     const newCategory = new Category({
       name: trimmedName,
       description: description ? description.trim() : "",
       code: code ? code.trim().toUpperCase() : undefined,
       status: status === "Inactive" ? "Inactive" : "Active",
       productType: resolvedTypeId,
+      image: imageUrl,
+      imagePublicId: imagePublicId,
     });
 
     const savedCategory = await newCategory.save();
@@ -91,13 +120,13 @@ exports.createCategory = async (req, res) => {
 };
 
 /**
- * Update a category
+ * Update a category (Supports updating image via Multer or base64/URL)
  * PUT /api/categories/:id
  */
 exports.updateCategory = async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, description, code, status, productType, type } = req.body;
+    const { name, description, code, status, productType, type, image } = req.body;
 
     const category = await Category.findById(id);
     if (!category) {
@@ -125,6 +154,35 @@ exports.updateCategory = async (req, res) => {
         category.productType = typeExists ? typeExists._id : null;
       } else {
         category.productType = null;
+      }
+    }
+
+    // Handle Image Replacement
+    if (req.file && req.file.buffer) {
+      try {
+        if (category.imagePublicId) {
+          await deleteFromCloudinary(category.imagePublicId);
+        }
+        const uploadResult = await uploadToCloudinary(req.file.buffer, "b2b_categories");
+        category.image = uploadResult.url;
+        category.imagePublicId = uploadResult.public_id;
+      } catch (uploadErr) {
+        console.error("Error uploading file to Cloudinary:", uploadErr);
+      }
+    } else if (image !== undefined) {
+      if (typeof image === "string" && image.startsWith("data:image")) {
+        try {
+          if (category.imagePublicId) {
+            await deleteFromCloudinary(category.imagePublicId);
+          }
+          const uploadResult = await uploadToCloudinary(image, "b2b_categories");
+          category.image = uploadResult.url;
+          category.imagePublicId = uploadResult.public_id;
+        } catch (uploadErr) {
+          console.error("Error uploading base64 to Cloudinary:", uploadErr);
+        }
+      } else if (typeof image === "string") {
+        category.image = image.trim();
       }
     }
 
@@ -162,6 +220,11 @@ exports.deleteCategory = async (req, res) => {
       });
     }
 
+    // Clean up Cloudinary asset
+    if (deleted.imagePublicId) {
+      await deleteFromCloudinary(deleted.imagePublicId);
+    }
+
     return res.status(200).json({
       success: true,
       message: "Category removed successfully",
@@ -176,4 +239,3 @@ exports.deleteCategory = async (req, res) => {
     });
   }
 };
-

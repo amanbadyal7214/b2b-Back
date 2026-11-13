@@ -33,6 +33,16 @@ const categorySchema = new mongoose.Schema(
       ref: "ProductType",
       default: null,
     },
+    image: {
+      type: String,
+      default: "",
+      trim: true,
+    },
+    imagePublicId: {
+      type: String,
+      default: "",
+      trim: true,
+    },
     itemCount: {
       type: Number,
       default: 0,

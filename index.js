@@ -13,6 +13,7 @@ const sizeRoutes = require("./Routes/Sizeroute");
 const colorRoutes = require("./Routes/Colorroute");
 const fitRoutes = require("./Routes/Fitroute");
 const fabricRoutes = require("./Routes/Fabricroute");
+const moqRoutes = require("./Routes/Moqroute");
 
 const app = express();
 
@@ -78,6 +79,14 @@ app.use("/api/fit", fitRoutes);
 app.use("/api/fabrics", fabricRoutes);
 app.use("/api/fabric", fabricRoutes);
 app.use("/api/fabric-gsm", fabricRoutes);
+
+// Product MOQ & Pack Type Routes
+app.use("/api/moq-types", moqRoutes);
+app.use("/api/moq-type", moqRoutes);
+app.use("/api/moqs", moqRoutes);
+app.use("/api/moq", moqRoutes);
+app.use("/api/pack-types", moqRoutes);
+app.use("/api/pack-type", moqRoutes);
 
 // 404 Handler
 app.use((req, res) => {

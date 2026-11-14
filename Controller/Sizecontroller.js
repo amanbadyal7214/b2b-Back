@@ -6,25 +6,25 @@ const Category = require("../Model/CategoryModel");
  * Standard default apparel sizes with logical ordering
  */
 const DEFAULT_APPAREL_SIZES = [
-  // Alpha Sizes
-  { name: "XS", code: "SZ-XS", system: "Alpha", sortOrder: 1, chest: "34-36 in", description: "Extra Small", status: "Active" },
-  { name: "S", code: "SZ-S", system: "Alpha", sortOrder: 2, chest: "36-38 in", description: "Small", status: "Active" },
-  { name: "M", code: "SZ-M", system: "Alpha", sortOrder: 3, chest: "38-40 in", description: "Medium", status: "Active" },
-  { name: "L", code: "SZ-L", system: "Alpha", sortOrder: 4, chest: "40-42 in", description: "Large", status: "Active" },
-  { name: "XL", code: "SZ-XL", system: "Alpha", sortOrder: 5, chest: "42-44 in", description: "Extra Large", status: "Active" },
-  { name: "XXL", code: "SZ-XXL", system: "Alpha", sortOrder: 6, chest: "44-46 in", description: "Double Extra Large", status: "Active" },
-  { name: "3XL", code: "SZ-3XL", system: "Alpha", sortOrder: 7, chest: "46-48 in", description: "Triple Extra Large", status: "Active" },
+  // Alpha Sizes (Tops)
+  { name: "XS", code: "SZ-XS", system: "Alpha", categoryType: "Topwear", sortOrder: 1, chest: "34-36 in", description: "Extra Small", status: "Active" },
+  { name: "S", code: "SZ-S", system: "Alpha", categoryType: "Topwear", sortOrder: 2, chest: "36-38 in", description: "Small", status: "Active" },
+  { name: "M", code: "SZ-M", system: "Alpha", categoryType: "Topwear", sortOrder: 3, chest: "38-40 in", description: "Medium", status: "Active" },
+  { name: "L", code: "SZ-L", system: "Alpha", categoryType: "Topwear", sortOrder: 4, chest: "40-42 in", description: "Large", status: "Active" },
+  { name: "XL", code: "SZ-XL", system: "Alpha", categoryType: "Topwear", sortOrder: 5, chest: "42-44 in", description: "Extra Large", status: "Active" },
+  { name: "XXL", code: "SZ-XXL", system: "Alpha", categoryType: "Topwear", sortOrder: 6, chest: "44-46 in", description: "Double Extra Large", status: "Active" },
+  { name: "3XL", code: "SZ-3XL", system: "Alpha", categoryType: "Topwear", sortOrder: 7, chest: "46-48 in", description: "Triple Extra Large", status: "Active" },
 
-  // Waist / Numeric Sizes
-  { name: "28", code: "SZ-28", system: "Numeric", sortOrder: 10, waist: "28 in", description: "Waist 28 Inch", status: "Active" },
-  { name: "30", code: "SZ-30", system: "Numeric", sortOrder: 11, waist: "30 in", description: "Waist 30 Inch", status: "Active" },
-  { name: "32", code: "SZ-32", system: "Numeric", sortOrder: 12, waist: "32 in", description: "Waist 32 Inch", status: "Active" },
-  { name: "34", code: "SZ-34", system: "Numeric", sortOrder: 13, waist: "34 in", description: "Waist 34 Inch", status: "Active" },
-  { name: "36", code: "SZ-36", system: "Numeric", sortOrder: 14, waist: "36 in", description: "Waist 36 Inch", status: "Active" },
-  { name: "38", code: "SZ-38", system: "Numeric", sortOrder: 15, waist: "38 in", description: "Waist 38 Inch", status: "Active" },
+  // Waist / Numeric Sizes (Bottoms)
+  { name: "28", code: "SZ-28", system: "Numeric", categoryType: "Bottomwear", sortOrder: 10, waist: "28 in", description: "Waist 28 Inch", status: "Active" },
+  { name: "30", code: "SZ-30", system: "Numeric", categoryType: "Bottomwear", sortOrder: 11, waist: "30 in", description: "Waist 30 Inch", status: "Active" },
+  { name: "32", code: "SZ-32", system: "Numeric", categoryType: "Bottomwear", sortOrder: 12, waist: "32 in", description: "Waist 32 Inch", status: "Active" },
+  { name: "34", code: "SZ-34", system: "Numeric", categoryType: "Bottomwear", sortOrder: 13, waist: "34 in", description: "Waist 34 Inch", status: "Active" },
+  { name: "36", code: "SZ-36", system: "Numeric", categoryType: "Bottomwear", sortOrder: 14, waist: "36 in", description: "Waist 36 Inch", status: "Active" },
+  { name: "38", code: "SZ-38", system: "Numeric", categoryType: "Bottomwear", sortOrder: 15, waist: "38 in", description: "Waist 38 Inch", status: "Active" },
 
   // Free / Universal
-  { name: "Free Size", code: "SZ-FS", system: "FreeSize", sortOrder: 20, description: "One Size Fits All", status: "Active" },
+  { name: "Free Size", code: "SZ-FS", system: "FreeSize", categoryType: "General", sortOrder: 20, description: "One Size Fits All", status: "Active" },
 ];
 
 /**
@@ -34,6 +34,16 @@ const DEFAULT_APPAREL_SIZES = [
  */
 exports.getSizes = async (req, res) => {
   try {
+    // Auto-seed defaults if collection is empty
+    const totalCount = await Size.countDocuments();
+    if (totalCount === 0) {
+      try {
+        await Size.insertMany(DEFAULT_APPAREL_SIZES);
+      } catch (seedErr) {
+        console.warn("Auto-seeding sizes error:", seedErr.message);
+      }
+    }
+
     const { status, system, search, category, categoryType } = req.query;
     const filter = {};
 

@@ -12,6 +12,7 @@ const productTypeRoutes = require("./Routes/ProductTyperoute");
 const sizeRoutes = require("./Routes/Sizeroute");
 const colorRoutes = require("./Routes/Colorroute");
 const fitRoutes = require("./Routes/Fitroute");
+const fabricRoutes = require("./Routes/Fabricroute");
 
 const app = express();
 
@@ -72,6 +73,11 @@ app.use("/api/colour", colorRoutes);
 // Product Fit Routes
 app.use("/api/fits", fitRoutes);
 app.use("/api/fit", fitRoutes);
+
+// Product Fabric & GSM Routes
+app.use("/api/fabrics", fabricRoutes);
+app.use("/api/fabric", fabricRoutes);
+app.use("/api/fabric-gsm", fabricRoutes);
 
 // 404 Handler
 app.use((req, res) => {

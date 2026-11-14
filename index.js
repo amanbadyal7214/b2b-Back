@@ -10,6 +10,7 @@ const adminRoutes = require("./Routes/Adminroute");
 const categoryRoutes = require("./Routes/Categoryroute");
 const productTypeRoutes = require("./Routes/ProductTyperoute");
 const sizeRoutes = require("./Routes/Sizeroute");
+const colorRoutes = require("./Routes/Colorroute");
 
 const app = express();
 
@@ -60,6 +61,12 @@ app.use("/api/product-type", productTypeRoutes);
 // Product Size Routes
 app.use("/api/sizes", sizeRoutes);
 app.use("/api/size", sizeRoutes);
+
+// Product Color Routes
+app.use("/api/colors", colorRoutes);
+app.use("/api/color", colorRoutes);
+app.use("/api/colours", colorRoutes);
+app.use("/api/colour", colorRoutes);
 
 // 404 Handler
 app.use((req, res) => {

@@ -11,6 +11,7 @@ const categoryRoutes = require("./Routes/Categoryroute");
 const productTypeRoutes = require("./Routes/ProductTyperoute");
 const sizeRoutes = require("./Routes/Sizeroute");
 const colorRoutes = require("./Routes/Colorroute");
+const fitRoutes = require("./Routes/Fitroute");
 
 const app = express();
 
@@ -18,7 +19,7 @@ const app = express();
 app.use(
   cors({
     origin: "*",
-    methods: ["GET", "POST", "PUT", "DELETE"],
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
     allowedHeaders: ["Content-Type", "Authorization"],
   })
 );
@@ -67,6 +68,10 @@ app.use("/api/colors", colorRoutes);
 app.use("/api/color", colorRoutes);
 app.use("/api/colours", colorRoutes);
 app.use("/api/colour", colorRoutes);
+
+// Product Fit Routes
+app.use("/api/fits", fitRoutes);
+app.use("/api/fit", fitRoutes);
 
 // 404 Handler
 app.use((req, res) => {

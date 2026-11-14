@@ -77,6 +77,10 @@ exports.createCategory = async (req, res) => {
         imagePublicId = uploadResult.public_id;
       } catch (uploadErr) {
         console.error("Error uploading file to Cloudinary:", uploadErr);
+        return res.status(500).json({
+          success: false,
+          message: `Failed to upload image to Cloudinary: ${uploadErr.message || "Network/Cloud error"}`,
+        });
       }
     }
     // 2. If uploaded as base64 data URI or string URL in body
@@ -87,7 +91,10 @@ exports.createCategory = async (req, res) => {
         imagePublicId = uploadResult.public_id;
       } catch (uploadErr) {
         console.error("Error uploading image string to Cloudinary:", uploadErr);
-        imageUrl = image.trim(); // fallback to direct string if given
+        return res.status(500).json({
+          success: false,
+          message: `Failed to upload image to Cloudinary: ${uploadErr.message || "Network/Cloud error"}`,
+        });
       }
     }
 
@@ -168,6 +175,10 @@ exports.updateCategory = async (req, res) => {
         category.imagePublicId = uploadResult.public_id;
       } catch (uploadErr) {
         console.error("Error uploading file to Cloudinary:", uploadErr);
+        return res.status(500).json({
+          success: false,
+          message: `Failed to upload image to Cloudinary: ${uploadErr.message || "Network/Cloud error"}`,
+        });
       }
     } else if (image !== undefined) {
       if (typeof image === "string" && image.startsWith("data:image")) {
@@ -180,6 +191,10 @@ exports.updateCategory = async (req, res) => {
           category.imagePublicId = uploadResult.public_id;
         } catch (uploadErr) {
           console.error("Error uploading base64 to Cloudinary:", uploadErr);
+          return res.status(500).json({
+            success: false,
+            message: `Failed to upload image to Cloudinary: ${uploadErr.message || "Network/Cloud error"}`,
+          });
         }
       } else if (typeof image === "string") {
         category.image = image.trim();

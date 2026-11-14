@@ -9,6 +9,7 @@ const userRoutes = require("./Routes/Userroute");
 const adminRoutes = require("./Routes/Adminroute");
 const categoryRoutes = require("./Routes/Categoryroute");
 const productTypeRoutes = require("./Routes/ProductTyperoute");
+const sizeRoutes = require("./Routes/Sizeroute");
 
 const app = express();
 
@@ -36,6 +37,7 @@ app.get("/", (req, res) => {
       users: "POST /api/users/register, POST /api/users/login",
       categories: "GET, POST, PUT, DELETE /api/categories",
       productTypes: "GET, POST, PUT, DELETE /api/product-types",
+      sizes: "GET, POST, PUT, DELETE /api/sizes (Seed: POST /api/sizes/seed)",
     },
   });
 });
@@ -54,6 +56,10 @@ app.use("/api/category", categoryRoutes);
 // Product Type Routes
 app.use("/api/product-types", productTypeRoutes);
 app.use("/api/product-type", productTypeRoutes);
+
+// Product Size Routes
+app.use("/api/sizes", sizeRoutes);
+app.use("/api/size", sizeRoutes);
 
 // 404 Handler
 app.use((req, res) => {

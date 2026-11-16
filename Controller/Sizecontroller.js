@@ -334,16 +334,51 @@ exports.deleteSize = async (req, res) => {
 };
 
 /**
- * Seed sizes endpoint (disabled - strictly custom DB data)
+ * Seed standard sizes into DB if none exist or on demand
  * POST /api/sizes/seed
  */
 exports.seedSizes = async (req, res) => {
-  const allSizes = await Size.find().sort({ sortOrder: 1, name: 1 });
-  return res.status(200).json({
-    success: true,
-    message: "Default sizes disabled. All sizes are managed directly in the database.",
-    count: allSizes.length,
-    sizes: allSizes,
-  });
+  try {
+    const DEFAULT_SIZES = [
+      { name: "XS", code: "SZ-XS", system: "Alpha", categoryType: "Tops", chest: '36"', waist: '30"', length: '27"', sortOrder: 1, description: 'Extra Small • 36" Chest', status: "Active" },
+      { name: "S", code: "SZ-S", system: "Alpha", categoryType: "Tops", chest: '38"', waist: '32"', length: '28"', sortOrder: 2, description: 'Small • 38" Chest', status: "Active" },
+      { name: "M", code: "SZ-M", system: "Alpha", categoryType: "Tops", chest: '40"', waist: '34"', length: '29"', sortOrder: 3, description: 'Medium • 40" Chest', status: "Active" },
+      { name: "L", code: "SZ-L", system: "Alpha", categoryType: "Tops", chest: '42"', waist: '36"', length: '30"', sortOrder: 4, description: 'Large • 42" Chest', status: "Active" },
+      { name: "XL", code: "SZ-XL", system: "Alpha", categoryType: "Tops", chest: '44"', waist: '38"', length: '31"', sortOrder: 5, description: 'Extra Large • 44" Chest', status: "Active" },
+      { name: "XXL", code: "SZ-XXL", system: "Alpha", categoryType: "Tops", chest: '46"', waist: '40"', length: '32"', sortOrder: 6, description: 'Double Extra Large • 46" Chest', status: "Active" },
+      { name: "3XL", code: "SZ-3XL", system: "Alpha", categoryType: "Tops", chest: '48"', waist: '42"', length: '33"', sortOrder: 7, description: 'Triple Extra Large • 48" Chest', status: "Active" },
+      { name: "28", code: "SZ-28", system: "Numeric", categoryType: "Bottoms", chest: "", waist: '28"', length: '32"', sortOrder: 8, description: '28" Waist • Standard Inseam', status: "Active" },
+      { name: "30", code: "SZ-30", system: "Numeric", categoryType: "Bottoms", chest: "", waist: '30"', length: '32"', sortOrder: 9, description: '30" Waist • Standard Inseam', status: "Active" },
+      { name: "32", code: "SZ-32", system: "Numeric", categoryType: "Bottoms", chest: "", waist: '32"', length: '32"', sortOrder: 10, description: '32" Waist • Standard Inseam', status: "Active" },
+      { name: "34", code: "SZ-34", system: "Numeric", categoryType: "Bottoms", chest: "", waist: '34"', length: '32"', sortOrder: 11, description: '34" Waist • Standard Inseam', status: "Active" },
+      { name: "36", code: "SZ-36", system: "Numeric", categoryType: "Bottoms", chest: "", waist: '36"', length: '32"', sortOrder: 12, description: '36" Waist • Standard Inseam', status: "Active" },
+      { name: "38", code: "SZ-38", system: "Numeric", categoryType: "Bottoms", chest: "", waist: '38"', length: '32"', sortOrder: 13, description: '38" Waist • Standard Inseam', status: "Active" },
+      { name: "FreeSize", code: "SZ-FREE", system: "FreeSize", categoryType: "General", chest: "Standard", waist: "Standard", length: "Standard", sortOrder: 14, description: "One Size Fits All", status: "Active" },
+    ];
+
+    const results = [];
+    for (const item of DEFAULT_SIZES) {
+      const existing = await Size.findOne({ name: item.name });
+      if (!existing) {
+        const created = await Size.create(item);
+        results.push(created);
+      }
+    }
+
+    const allSizes = await Size.find().sort({ sortOrder: 1, name: 1 });
+    return res.status(200).json({
+      success: true,
+      message: `Standard sizes seeded successfully (${results.length} added).`,
+      seededCount: results.length,
+      totalCount: allSizes.length,
+      sizes: allSizes,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: "Failed to seed sizes",
+      error: error.message,
+    });
+  }
 };
 

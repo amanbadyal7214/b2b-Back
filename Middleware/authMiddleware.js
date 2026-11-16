@@ -1,5 +1,6 @@
 const jwt = require("jsonwebtoken");
 const Admin = require("../Model/AdminModel");
+const User = require("../Model/UserModel");
 
 /**
  * Middleware to verify Admin JWT Token from Authorization header
@@ -75,8 +76,83 @@ const requireRole = (...allowedRoles) => {
   };
 };
 
+/**
+ * Middleware to verify standard Retailer/Customer User JWT Token
+ */
+const verifyUserToken = async (req, res, next) => {
+  try {
+    const authHeader = req.headers.authorization;
+
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({
+        success: false,
+        message: "Authentication required. Please log in.",
+      });
+    }
+
+    const token = authHeader.split(" ")[1];
+    const secret = process.env.JWT_SECRET || "bvb_secret_key";
+
+    const decoded = jwt.verify(token, secret);
+    const user = await User.findById(decoded.id).select("-password");
+
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        message: "User account does not exist or has been removed.",
+      });
+    }
+
+    req.user = user;
+    next();
+  } catch (err) {
+    if (err.name === "TokenExpiredError") {
+      return res.status(401).json({
+        success: false,
+        message: "Session expired. Please log in again.",
+      });
+    }
+    return res.status(401).json({
+      success: false,
+      message: "Invalid or expired authorization token.",
+    });
+  }
+};
+
+/**
+ * Optional User Token Middleware
+ * Allows guest access while attaching req.user if a valid token is provided
+ */
+const optionalUserToken = async (req, res, next) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith("Bearer ")) {
+      const token = authHeader.split(" ")[1];
+      const secret = process.env.JWT_SECRET || "bvb_secret_key";
+      try {
+        const decoded = jwt.verify(token, secret);
+        const user = await User.findById(decoded.id).select("-password");
+        if (user) {
+          req.user = user;
+        }
+      } catch {
+        // Token invalid or expired - treat as guest
+        req.user = null;
+      }
+    } else {
+      req.user = null;
+    }
+    next();
+  } catch (err) {
+    req.user = null;
+    next();
+  }
+};
+
 module.exports = {
   verifyAdminToken,
   requireRole,
+  verifyUserToken,
+  optionalUserToken,
 };
 

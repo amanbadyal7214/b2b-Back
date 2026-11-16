@@ -15,6 +15,8 @@ const fitRoutes = require("./Routes/Fitroute");
 const fabricRoutes = require("./Routes/Fabricroute");
 const moqRoutes = require("./Routes/Moqroute");
 const productRoutes = require("./Routes/Productroute");
+const cartRoutes = require("./Routes/Cartroute");
+const wishlistRoutes = require("./Routes/Wishlistroute");
 
 const app = express();
 
@@ -22,8 +24,8 @@ const app = express();
 app.use(
   cors({
     origin: "*",
-    methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
-    allowedHeaders: ["Content-Type", "Authorization"],
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "x-guest-id", "X-Guest-Id"],
   })
 );
 
@@ -76,8 +78,11 @@ app.use("/api", (req, res, next) => {
 app.use("/api/admin", adminRoutes);
 app.use("/api", adminRoutes);
 
-// User Routes
+// User & Retailer Routes
 app.use("/api/users", userRoutes);
+app.use("/api/user", userRoutes);
+app.use("/api/retailers", userRoutes);
+app.use("/api/retailer", userRoutes);
 
 // Product Category Routes
 app.use("/api/categories", categoryRoutes);
@@ -117,6 +122,10 @@ app.use("/api/pack-type", moqRoutes);
 // Wholesale Products Catalog & Variant Routes
 app.use("/api/products", productRoutes);
 app.use("/api/product", productRoutes);
+
+// Shopping Bag (Cart) & Wishlist Routes (Myntra SKU & Style architecture)
+app.use("/api/cart", cartRoutes);
+app.use("/api/wishlist", wishlistRoutes);
 
 // 404 Handler
 app.use((req, res) => {

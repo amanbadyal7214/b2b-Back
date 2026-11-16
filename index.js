@@ -33,8 +33,10 @@ app.use(express.urlencoded({ extended: true, limit: "60mb" }));
 
 // Service status & endpoint map
 app.get("/", (req, res) => {
+  const isDbConnected = mongoose.connection.readyState === 1;
   res.json({
     status: "Online",
+    database: isDbConnected ? "Connected" : "Disconnected",
     service: "Buddy Vs Buff B2B Wholesale API",
     version: "2.4.0-LUX",
     endpoints: {
@@ -46,6 +48,28 @@ app.get("/", (req, res) => {
       sizes: "GET, POST, PUT, DELETE /api/sizes (Seed: POST /api/sizes/seed)",
     },
   });
+});
+
+app.get("/health", (req, res) => {
+  const isDbConnected = mongoose.connection.readyState === 1;
+  res.status(isDbConnected ? 200 : 503).json({
+    status: isDbConnected ? "Healthy" : "Degraded",
+    database: isDbConnected ? "Connected" : "Disconnected",
+    readyState: mongoose.connection.readyState,
+  });
+});
+
+// Database readiness check for API routes
+app.use("/api", (req, res, next) => {
+  // If MongoDB is disconnected (0) or disconnecting (3), fail fast with clear message
+  if (mongoose.connection.readyState === 0 || mongoose.connection.readyState === 3) {
+    return res.status(503).json({
+      success: false,
+      message: "Database connection unavailable. MongoDB is not connected.",
+      error: "MongoDB connection is disconnected. Please ensure MongoDB service is running.",
+    });
+  }
+  next();
 });
 
 // Admin Routes (Directly supports /api/admin-access, /api/admin/access, etc.)
@@ -120,20 +144,40 @@ app.use((err, req, res, next) => {
   });
 });
 
-// MongoDB Connection
-const rawMongoUri = process.env.MONGO_URL || "mongodb://localhost:27017/B2B";
-const mongoUri = rawMongoUri.trim().replace(/;+$/, "");
+// MongoDB Connection & Lifecycle
+const rawMongoUri = process.env.MONGO_URL || "mongodb://127.0.0.1:27017/B2B";
+let mongoUri = rawMongoUri.trim().replace(/;+$/, "");
+
+// Normalize localhost to 127.0.0.1 to avoid IPv6 (::1) lookup timeouts on Node.js 18+ Windows
+if (mongoUri.includes("localhost:27017")) {
+  mongoUri = mongoUri.replace("localhost:27017", "127.0.0.1:27017");
+}
+
+mongoose.connection.on("connected", () => {
+  console.log(`[Database] MongoDB connected successfully to ${mongoUri.replace(/:([^:@]{4})[^:@]*@/, ":****@")}`);
+});
+
+mongoose.connection.on("error", (err) => {
+  console.error("[Database] MongoDB connection error:", err.message);
+});
+
+mongoose.connection.on("disconnected", () => {
+  console.warn("[Database] MongoDB connection disconnected.");
+});
 
 mongoose
-  .connect(mongoUri)
+  .connect(mongoUri, {
+    serverSelectionTimeoutMS: 5000,
+  })
   .then(() => {
-    console.log("Connected to MongoDB successfully");
+    console.log("[Database] Initial MongoDB connection established.");
   })
   .catch((err) => {
-    console.error("Error connecting to MongoDB:", err.message);
+    console.error("[Database] Failed to establish initial MongoDB connection:", err.message);
+    console.error("[Database] Ensure MongoDB service is running locally on port 27017 or verify MONGO_URL in Backend/.env");
   });
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
+  console.log(`[Server] BVB Backend API is running on http://localhost:${PORT}`);
 });

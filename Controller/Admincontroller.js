@@ -100,9 +100,16 @@ const adminAccess = async (req, res) => {
     });
   } catch (error) {
     console.error("[adminAccess] Error processing administrative login:", error);
-    return res.status(500).json({
+    const isTimeoutOrDbError =
+      error.message?.includes("buffering timed out") ||
+      error.name === "MongooseError" ||
+      error.name === "MongoServerSelectionError";
+
+    return res.status(isTimeoutOrDbError ? 503 : 500).json({
       success: false,
-      message: "Internal server error during administrative authorization.",
+      message: isTimeoutOrDbError
+        ? "Database connection unavailable. MongoDB is not reachable."
+        : "Internal server error during administrative authorization.",
       error: error.message,
     });
   }

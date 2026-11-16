@@ -14,6 +14,7 @@ const colorRoutes = require("./Routes/Colorroute");
 const fitRoutes = require("./Routes/Fitroute");
 const fabricRoutes = require("./Routes/Fabricroute");
 const moqRoutes = require("./Routes/Moqroute");
+const productRoutes = require("./Routes/Productroute");
 
 const app = express();
 
@@ -27,7 +28,8 @@ app.use(
 );
 
 // Body parser
-app.use(express.json());
+app.use(express.json({ limit: "60mb" }));
+app.use(express.urlencoded({ extended: true, limit: "60mb" }));
 
 // Service status & endpoint map
 app.get("/", (req, res) => {
@@ -88,6 +90,10 @@ app.use("/api/moq", moqRoutes);
 app.use("/api/pack-types", moqRoutes);
 app.use("/api/pack-type", moqRoutes);
 
+// Wholesale Products Catalog & Variant Routes
+app.use("/api/products", productRoutes);
+app.use("/api/product", productRoutes);
+
 // 404 Handler
 app.use((req, res) => {
   res.status(404).json({
@@ -99,6 +105,14 @@ app.use((req, res) => {
 // Global Error Handler
 app.use((err, req, res, next) => {
   console.error("Server Error:", err);
+  if (err.name === "MulterError") {
+    return res.status(400).json({
+      success: false,
+      message: `Upload error: ${err.message}`,
+      code: err.code,
+      field: err.field,
+    });
+  }
   res.status(500).json({
     success: false,
     message: "Internal server error",

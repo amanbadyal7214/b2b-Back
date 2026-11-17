@@ -17,6 +17,7 @@ const moqRoutes = require("./Routes/Moqroute");
 const productRoutes = require("./Routes/Productroute");
 const cartRoutes = require("./Routes/Cartroute");
 const wishlistRoutes = require("./Routes/Wishlistroute");
+const pincodeRoutes = require("./Routes/Pincoderoute");
 
 const app = express();
 
@@ -126,6 +127,10 @@ app.use("/api/product", productRoutes);
 // Shopping Bag (Cart) & Wishlist Routes (Myntra SKU & Style architecture)
 app.use("/api/cart", cartRoutes);
 app.use("/api/wishlist", wishlistRoutes);
+
+// Serviceable Pincodes & Delivery Network Routes
+app.use("/api/pincodes", pincodeRoutes);
+app.use("/api/pincode", pincodeRoutes);
 
 // 404 Handler
 app.use((req, res) => {

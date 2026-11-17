@@ -100,6 +100,7 @@ const registerUser = async (req, res) => {
     const resolvedStoreName = (storeName || companyName || "").trim();
     const resolvedEmail = (email || "").trim().toLowerCase();
     const resolvedPhone = (phone || mobile || "").trim();
+    const resolvedPassword = typeof password === "string" ? password.trim() : "";
 
     // Validation
     if (!resolvedEmail) {
@@ -120,6 +121,20 @@ const registerUser = async (req, res) => {
       return res.status(400).json({
         success: false,
         message: "Store or legal entity name is required.",
+      });
+    }
+
+    if (!resolvedPassword) {
+      return res.status(400).json({
+        success: false,
+        message: "Account password is required.",
+      });
+    }
+
+    if (resolvedPassword.length < 6) {
+      return res.status(400).json({
+        success: false,
+        message: "Password must be at least 6 characters.",
       });
     }
 
@@ -151,8 +166,8 @@ const registerUser = async (req, res) => {
         rebatePercent: tierCalc.rebatePercent,
       };
 
-      if (password && password.length >= 6) {
-        existingUser.password = password;
+      if (resolvedPassword && resolvedPassword.length >= 6) {
+        existingUser.password = resolvedPassword;
       }
 
       await existingUser.save();
@@ -193,10 +208,6 @@ const registerUser = async (req, res) => {
     const appRef = `BVB-REG-${Math.floor(100000 + Math.random() * 900000)}`;
     const passCode = `BVB-TP-${appRef.replace("BVB-REG-", "")}`;
 
-    const effectivePassword = password && password.length >= 6
-      ? password
-      : `BvbStore#${appRef.slice(-4)}`;
-
     const newUser = new User({
       name: resolvedName,
       ownerName: resolvedName,
@@ -205,7 +216,7 @@ const registerUser = async (req, res) => {
       email: resolvedEmail,
       phone: resolvedPhone || "",
       mobile: resolvedPhone || "",
-      password: effectivePassword,
+      password: resolvedPassword,
       storeFormat: storeFormat ? storeFormat.trim() : "",
       orderVolume: orderVolume ? orderVolume.trim() : "",
       assignedSlab: tierCalc.assignedSlab || "",
@@ -304,14 +315,19 @@ const loginUser = async (req, res) => {
       });
     }
 
-    if (password) {
-      const isMatch = await user.comparePassword(password);
-      if (!isMatch) {
-        return res.status(401).json({
-          success: false,
-          message: "Invalid credentials. Please verify your password.",
-        });
-      }
+    if (!password) {
+      return res.status(400).json({
+        success: false,
+        message: "Password is required for login.",
+      });
+    }
+
+    const isMatch = await user.comparePassword(password);
+    if (!isMatch) {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid credentials. Please verify your password.",
+      });
     }
 
     user.lastLogin = new Date();

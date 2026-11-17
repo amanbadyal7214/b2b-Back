@@ -565,7 +565,7 @@ const mergeGuestCart = async (req, res) => {
 
       if (existingIndex > -1) {
         const existing = userCart.items[existingIndex];
-        const newTotal = existing.quantity + qtyToAdd;
+        const newTotal = Math.max(existing.quantity, qtyToAdd);
         existing.quantity = skuObj ? Math.min(newTotal, skuObj.stock) : newTotal;
       } else {
         const unitPrice =

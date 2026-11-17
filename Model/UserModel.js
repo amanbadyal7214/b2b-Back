@@ -46,7 +46,8 @@ const userSchema = new mongoose.Schema(
     // Password for account login
     password: {
       type: String,
-      minlength: 6,
+      required: [true, "Account password is required"],
+      minlength: [6, "Password must be at least 6 characters"],
     },
 
     // Store Format (e.g., Independent Menswear Boutique, Multi-Brand Retail, Regional Chain)

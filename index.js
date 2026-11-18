@@ -18,6 +18,10 @@ const productRoutes = require("./Routes/Productroute");
 const cartRoutes = require("./Routes/Cartroute");
 const wishlistRoutes = require("./Routes/Wishlistroute");
 const pincodeRoutes = require("./Routes/Pincoderoute");
+const checkoutRoutes = require("./Routes/Checkoutroute");
+const orderRoutes = require("./Routes/Orderroute");
+const paymentRoutes = require("./Routes/Paymentroute");
+const { autoSeedPincodesIfEmpty } = require("./Controller/Pincodecontroller");
 
 const app = express();
 
@@ -132,6 +136,13 @@ app.use("/api/wishlist", wishlistRoutes);
 app.use("/api/pincodes", pincodeRoutes);
 app.use("/api/pincode", pincodeRoutes);
 
+// Checkout, Order & Payment Routes (Full e-commerce flow: Add to Cart -> Order Placed)
+app.use("/api/checkout", checkoutRoutes);
+app.use("/api/orders", orderRoutes);
+app.use("/api/order", orderRoutes);
+app.use("/api/payments", paymentRoutes);
+app.use("/api/payment", paymentRoutes);
+
 // 404 Handler
 app.use((req, res) => {
   res.status(404).json({
@@ -169,6 +180,7 @@ if (mongoUri.includes("localhost:27017")) {
 
 mongoose.connection.on("connected", () => {
   console.log(`[Database] MongoDB connected successfully to ${mongoUri.replace(/:([^:@]{4})[^:@]*@/, ":****@")}`);
+  autoSeedPincodesIfEmpty();
 });
 
 mongoose.connection.on("error", (err) => {

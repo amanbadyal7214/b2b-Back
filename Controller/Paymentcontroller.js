@@ -1,20 +1,22 @@
 const crypto = require("crypto");
 const Order = require("../Model/OrderModel");
 const Payment = require("../Model/PaymentModel");
-const StockLock = require("../Model/StockLockModel");
-const Product = require("../Model/ProductModel");
 const Cart = require("../Model/CartModel");
+const {
+  deductStockForOrder,
+  releaseStockForOrder,
+} = require("../Services/inventoryService");
 
 /**
  * Helper: Confirms an Order once payment is verified or captured via webhook
- * Step 12: Order paid mark, stock deduct, lock release, cart clear
+ * Step 12: Order paid mark, atomic stock deduct (onHand -= qty, reserved -= qty), lock consumed, cart clear
  * Rule 3: Must be idempotent (running twice changes nothing and deducts stock only once)
  */
-const executeOrderFulfillment = async (orderId, paymentRecord = null) => {
+const executeOrderFulfillment = async (orderId, paymentRecord = null, sourceLabel = "Payment Verification") => {
   const order = await Order.findById(orderId);
   if (!order) return null;
 
-  // Idempotency check: if order is already paid, do NOT re-deduct stock!
+  // Idempotency check: if order is already paid and stock deducted, do NOT re-deduct!
   if (order.status === "paid" && order.isStockDeducted) {
     return order;
   }
@@ -24,41 +26,19 @@ const executeOrderFulfillment = async (orderId, paymentRecord = null) => {
   order.paymentStatus = "paid";
   order.paidAt = new Date();
 
-  // 2. Permanently Deduct Stock from Product SKUs
+  // 2. Atomically Deduct Stock (onHand -= qty, reserved -= qty, lock -> consumed, log DEDUCT)
   if (!order.isStockDeducted) {
-    for (const item of order.items) {
-      const product = await Product.findById(item.productId);
-      if (product && Array.isArray(product.variants)) {
-        for (const variant of product.variants) {
-          if (Array.isArray(variant.skus)) {
-            const skuObj = variant.skus.find(
-              (s) =>
-                s.sku?.toUpperCase() === item.skuId?.toUpperCase() ||
-                s.size?.toUpperCase() === item.size?.toUpperCase()
-            );
-            if (skuObj) {
-              skuObj.stock = Math.max(0, skuObj.stock - item.quantity);
-              if (skuObj.stock === 0) {
-                skuObj.status = "Out of Stock";
-              }
-            }
-          }
-        }
-        await product.save();
-      }
-    }
+    await deductStockForOrder(order, {
+      by: order.userId || null,
+      byModel: "System",
+      byName: sourceLabel,
+    });
     order.isStockDeducted = true;
   }
 
-  // 3. Mark Stock Locks as Deducted
-  await StockLock.updateMany(
-    { orderId: order._id, status: "active" },
-    { status: "deducted" }
-  );
-
   await order.save();
 
-  // 4. Clear the user's cart in Database
+  // 3. Clear the user's cart in Database
   if (order.userId) {
     await Cart.findOneAndUpdate(
       { userId: order.userId, status: "active" },
@@ -66,7 +46,7 @@ const executeOrderFulfillment = async (orderId, paymentRecord = null) => {
     );
   }
 
-  // 5. Update Payment Record if provided
+  // 4. Update Payment Record if provided
   if (paymentRecord && paymentRecord.status !== "success") {
     paymentRecord.status = "success";
     await paymentRecord.save();
@@ -107,7 +87,10 @@ const createPaymentOrder = async (req, res) => {
     if (order.stockLockedUntil && new Date() > order.stockLockedUntil) {
       order.status = "expired";
       await order.save();
-      await StockLock.updateMany({ orderId: order._id, status: "active" }, { status: "released" });
+      await releaseStockForOrder(order._id, "Checkout lock expired before payment initialization", {
+        byModel: "System",
+        byName: "Payment Gateway Check",
+      });
       return res.status(400).json({
         success: false,
         isExpired: true,
@@ -290,7 +273,13 @@ const verifyPayment = async (req, res) => {
       await payment.save();
 
       order.paymentStatus = "failed";
+      order.status = "failed";
       await order.save();
+
+      await releaseStockForOrder(order._id, "Payment signature verification failed", {
+        byModel: "System",
+        byName: "Payment Verification",
+      });
 
       return res.status(400).json({
         success: false,
@@ -298,8 +287,8 @@ const verifyPayment = async (req, res) => {
       });
     }
 
-    // Execute Step 12: Order fulfillment & stock deduction
-    const confirmedOrder = await executeOrderFulfillment(order._id, payment);
+    // Execute Step 12: Order fulfillment & atomic stock deduction
+    const confirmedOrder = await executeOrderFulfillment(order._id, payment, "Payment Verification");
 
     return res.status(200).json({
       success: true,
@@ -384,10 +373,17 @@ const handleWebhook = async (req, res) => {
         });
       }
 
-      await executeOrderFulfillment(order._id, payment);
+      await executeOrderFulfillment(order._id, payment, "Payment Webhook");
     } else if (event === "payment.failed") {
       order.paymentStatus = "failed";
+      order.status = "failed";
       await order.save();
+
+      await releaseStockForOrder(
+        order._id,
+        paymentEntity?.error_description || "Payment failed at gateway (webhook)",
+        { byModel: "System", byName: "Payment Webhook" }
+      );
 
       let payment = await Payment.findOne({ gatewayOrderId: rzpOrderId });
       if (payment) {

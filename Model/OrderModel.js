@@ -52,6 +52,31 @@ const orderItemSchema = new mongoose.Schema(
       type: String,
       default: "",
     },
+    warehouseId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Warehouse",
+      default: null,
+    },
+    cancelledQty: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    returnedQty: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    damagedQty: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    itemStatus: {
+      type: String,
+      enum: ["active", "partially_cancelled", "cancelled", "returned"],
+      default: "active",
+    },
   },
   { _id: true }
 );
@@ -106,7 +131,9 @@ const orderSchema = new mongoose.Schema(
         "processing",
         "dispatched",
         "delivered",
+        "partially_cancelled",
         "cancelled",
+        "returned",
         "failed",
         "expired",
       ],

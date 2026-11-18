@@ -2,6 +2,7 @@ const Address = require("../Model/AddressModel");
 const Pincode = require("../Model/PincodeModel");
 const Cart = require("../Model/CartModel");
 const Product = require("../Model/ProductModel");
+const { getAvailableStockForSku } = require("../Services/inventoryService");
 
 /**
  * Controller: saveAddress
@@ -199,7 +200,8 @@ const getCheckoutSummary = async (req, res) => {
         warnings.push(`Price for ${item.productName} updated from ₹${item.price} to current rate of ₹${livePrice}/pc.`);
       }
 
-      const availableStock = skuObj ? skuObj.stock : 50;
+      const liveInv = await getAvailableStockForSku(skuObj?.sku || item.skuId, product._id);
+      const availableStock = liveInv.exists ? liveInv.available : (skuObj ? skuObj.stock : 50);
       if (availableStock <= 0) {
         warnings.push(`⚠️ ${item.productName} (${item.size}) is currently OUT OF STOCK.`);
       } else if (availableStock < item.quantity) {

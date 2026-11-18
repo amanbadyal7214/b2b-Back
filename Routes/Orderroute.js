@@ -6,6 +6,8 @@ const {
   getUserOrders,
   getAllOrdersForAdmin,
   updateOrderStatusByAdmin,
+  partialCancelOrderItemByAdmin,
+  processOrderReturnByAdmin,
 } = require("../Controller/Ordercontroller");
 const { verifyUserToken, optionalUserToken } = require("../Middleware/authMiddleware");
 
@@ -16,6 +18,8 @@ router.get("/admin/:id", getOrderById);
 router.patch("/admin/:id/status", updateOrderStatusByAdmin);
 router.put("/admin/:id/status", updateOrderStatusByAdmin);
 router.put("/admin/:id", updateOrderStatusByAdmin);
+router.post("/admin/:id/partial-cancel", partialCancelOrderItemByAdmin);
+router.post("/admin/:id/return", processOrderReturnByAdmin);
 
 // Step 7: Create order from cart with server-verified prices & 15-min stock lock
 router.post("/", verifyUserToken, createOrder);

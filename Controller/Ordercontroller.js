@@ -1,49 +1,39 @@
+const mongoose = require("mongoose");
 const Order = require("../Model/OrderModel");
 const Cart = require("../Model/CartModel");
 const Product = require("../Model/ProductModel");
 const Pincode = require("../Model/PincodeModel");
-const StockLock = require("../Model/StockLockModel");
 const Address = require("../Model/AddressModel");
+const {
+  DEFAULT_LOCK_MINUTES,
+  releaseExpiredLocks,
+  reserveStockForOrder,
+  releaseStockForOrder,
+  restockCancelledOrder,
+  partialCancelOrderItem,
+  processOrderReturn,
+} = require("../Services/inventoryService");
 
 /**
- * Routine: Release expired stock locks older than 15 minutes
+ * Routine: Release expired stock locks (delegates to atomic inventoryService)
  */
 const cleanExpiredStockLocks = async () => {
   try {
-    const now = new Date();
-    const expiredLocks = await StockLock.find({
-      status: "active",
-      expiresAt: { $lt: now },
-    });
-
-    if (expiredLocks.length > 0) {
-      for (const lock of expiredLocks) {
-        lock.status = "released";
-        await lock.save();
-
-        // Expire order if still pending
-        await Order.findOneAndUpdate(
-          { _id: lock.orderId, status: "pending" },
-          { status: "expired" }
-        );
-      }
-    }
+    return await releaseExpiredLocks();
   } catch (err) {
     console.warn("[cleanExpiredStockLocks] Note:", err.message);
+    return { releasedLocks: 0, expiredOrders: 0 };
   }
 };
-
-// Automatic 2-minute interval cron to release expired stock locks & expire abandoned pending orders
-setInterval(cleanExpiredStockLocks, 2 * 60 * 1000);
 
 /**
  * Controller: createOrder
  * POST /api/orders
- * Step 7: Cart se order banata hai, price server se fresh calculate, stock 15 min lock
- * Rule 1: Price strictly calculated on server
- * Rule 4: Order creation & stock lock in consistent atomic sequence
+ * Step 7: Creates order from cart, calculates server-side prices, and ATOMICALLY reserves SKU stock
+ * for 15 minutes (overselling-proof via $expr conditional update + transaction/rollback).
  */
 const createOrder = async (req, res) => {
+  let reservedOrderId = null;
   try {
     const userId = req.user ? req.user._id : null;
     if (!userId) {
@@ -53,6 +43,7 @@ const createOrder = async (req, res) => {
       });
     }
 
+    // Free any expired locks before reserving so buyers don't hit stale holds
     await cleanExpiredStockLocks();
 
     const {
@@ -98,11 +89,10 @@ const createOrder = async (req, res) => {
       });
     }
 
-    // 3. Re-verify products, stock and calculate prices strictly on server
+    // 3. Re-verify products & calculate prices strictly on server
     let grossMerchandise = 0;
     let totalPieces = 0;
     const orderItems = [];
-    const stockLockPromises = [];
 
     for (const item of cart.items) {
       const product = await Product.findById(item.productId);
@@ -118,7 +108,9 @@ const createOrder = async (req, res) => {
           (v) =>
             v.color?.toLowerCase() === item.color?.toLowerCase() ||
             v.name?.toLowerCase() === item.color?.toLowerCase()
-        ) || product.variants?.[0] || null;
+        ) ||
+        product.variants?.[0] ||
+        null;
 
       const skuObj = variant?.skus?.find(
         (s) =>
@@ -126,29 +118,7 @@ const createOrder = async (req, res) => {
           s.size?.toUpperCase() === item.size?.toUpperCase()
       );
 
-      const availableStock = skuObj ? skuObj.stock : 50;
-
-      // Count currently locked active stock for this SKU
-      const existingLocks = await StockLock.find({
-        skuId: item.skuId,
-        status: "active",
-        expiresAt: { $gt: new Date() },
-      });
-      const currentlyLocked = existingLocks.reduce((acc, l) => acc + l.quantity, 0);
-
-      const effectiveStock = availableStock - currentlyLocked;
-      if (effectiveStock < item.quantity) {
-        return res.status(400).json({
-          success: false,
-          message: `Insufficient inventory for ${product.name} (${item.size}). Available: ${Math.max(0, effectiveStock)} units.`,
-          outOfStockItem: {
-            name: product.name,
-            size: item.size,
-            available: Math.max(0, effectiveStock),
-            requested: item.quantity,
-          },
-        });
-      }
+      const resolvedSkuId = (skuObj?.sku || item.skuId || "").toUpperCase();
 
       // Rule 1: Always take server price
       const livePrice =
@@ -164,7 +134,7 @@ const createOrder = async (req, res) => {
 
       orderItems.push({
         productId: product._id,
-        skuId: item.skuId,
+        skuId: resolvedSkuId,
         productSku: product.sku || "",
         productName: product.name,
         color: item.color || variant?.color || "Standard",
@@ -174,7 +144,12 @@ const createOrder = async (req, res) => {
         unitPrice: livePrice,
         mrp: variant?.mrp ?? product.retailPrice ?? 0,
         totalPrice: lineTotal,
-        image: variant?.gallery?.front || variant?.images?.[0] || product.image || item.image || "",
+        image:
+          variant?.gallery?.front ||
+          variant?.images?.[0] ||
+          product.image ||
+          item.image ||
+          "",
       });
     }
 
@@ -190,18 +165,57 @@ const createOrder = async (req, res) => {
     const freightCost = totalPieces >= 150 ? 0 : 850;
     const grandTotal = discountedTotal + gstAmount + freightCost;
 
-    // 5. Generate Order ID
+    // 5. Generate Order ObjectId & Order Number
+    const orderObjectId = new mongoose.Types.ObjectId();
     const randomSuffix = Math.floor(100000 + Math.random() * 900000);
     const orderId = `BVB-PO-${randomSuffix}`;
 
     // 6. Set 15 Minute Stock Lock Expiration
-    const stockLockedUntil = new Date(Date.now() + 15 * 60 * 1000);
+    const stockLockedUntil = new Date(Date.now() + DEFAULT_LOCK_MINUTES * 60 * 1000);
+
+    // 7. ATOMICALLY Reserve Stock across all items (MongoDB Transaction / Rollback)
+    let reservations = [];
+    try {
+      reservations = await reserveStockForOrder({
+        orderId: orderObjectId,
+        orderNumber: orderId,
+        items: orderItems,
+        expiresAt: stockLockedUntil,
+        actor: {
+          by: userId,
+          byModel: "User",
+          byName: req.user?.name || req.user?.email || "Retailer",
+        },
+      });
+      reservedOrderId = orderObjectId;
+    } catch (stockErr) {
+      if (stockErr.code === "OUT_OF_STOCK") {
+        return res.status(400).json({
+          success: false,
+          message: stockErr.message,
+          outOfStockItem: stockErr.outOfStockItem,
+        });
+      }
+      throw stockErr;
+    }
+
+    // Attach assigned warehouseId from reservation to each order line item
+    const warehouseBySku = {};
+    for (const r of reservations) {
+      warehouseBySku[r.skuId] = r.warehouseId;
+    }
+    for (const oi of orderItems) {
+      if (warehouseBySku[oi.skuId]) {
+        oi.warehouseId = warehouseBySku[oi.skuId];
+      }
+    }
 
     const estimatedDays = pinRecord.estimatedDays || 3;
     const estimatedDeliveryDate = new Date(Date.now() + estimatedDays * 24 * 60 * 60 * 1000);
 
-    // 7. Save Order Document
+    // 8. Save Order Document
     const order = new Order({
+      _id: orderObjectId,
       orderId,
       userId,
       items: orderItems,
@@ -242,22 +256,11 @@ const createOrder = async (req, res) => {
     });
 
     await order.save();
-
-    // 8. Create Stock Lock Records
-    for (const item of orderItems) {
-      await StockLock.create({
-        orderId: order._id,
-        productId: item.productId,
-        skuId: item.skuId,
-        quantity: item.quantity,
-        expiresAt: stockLockedUntil,
-        status: "active",
-      });
-    }
+    reservedOrderId = null; // Persisted successfully
 
     return res.status(201).json({
       success: true,
-      message: `Order ${orderId} created. Stock reserved for 15 minutes.`,
+      message: `Order ${orderId} created. Stock reserved for ${DEFAULT_LOCK_MINUTES} minutes.`,
       orderId: order.orderId,
       order: {
         id: order._id,
@@ -273,6 +276,10 @@ const createOrder = async (req, res) => {
       },
     });
   } catch (error) {
+    // Safety net: if stock was reserved but saving Order failed, release locks immediately
+    if (reservedOrderId) {
+      await releaseStockForOrder(reservedOrderId, "Order persistence failure rollback").catch(() => {});
+    }
     console.error("[createOrder] Error:", error);
     return res.status(500).json({
       success: false,
@@ -285,7 +292,6 @@ const createOrder = async (req, res) => {
 /**
  * Controller: getOrderById
  * GET /api/orders/:id
- * Step 13: Confirmation screen & order details
  */
 const getOrderById = async (req, res) => {
   try {
@@ -351,7 +357,6 @@ const getUserOrders = async (req, res) => {
 /**
  * Controller: getAllOrdersForAdmin
  * GET /api/orders/admin
- * Fetches all wholesale manifest orders across the platform with filtering, search & metrics
  */
 const getAllOrdersForAdmin = async (req, res) => {
   try {
@@ -391,7 +396,6 @@ const getAllOrdersForAdmin = async (req, res) => {
       Order.countDocuments(filter),
     ]);
 
-    // Aggregate key executive stats across all orders
     const allOrders = await Order.find({}).select("status paymentStatus pricing totalUnits");
     let totalRevenue = 0;
     let paidCount = 0;
@@ -401,7 +405,7 @@ const getAllOrdersForAdmin = async (req, res) => {
     let totalPiecesSold = 0;
 
     for (const ord of allOrders) {
-      if (["paid", "processing", "dispatched", "delivered"].includes(ord.status)) {
+      if (["paid", "processing", "dispatched", "delivered", "partially_cancelled"].includes(ord.status)) {
         totalRevenue += ord.pricing?.grandTotal || 0;
         totalPiecesSold += ord.totalUnits || 0;
         paidCount++;
@@ -446,7 +450,7 @@ const getAllOrdersForAdmin = async (req, res) => {
 /**
  * Controller: updateOrderStatusByAdmin
  * PATCH /api/orders/admin/:id/status
- * Updates dispatch and fulfillment status, tracking numbers, or releases inventory on cancellation
+ * Updates fulfillment status, tracking numbers, and handles inventory release/restock on cancellation
  */
 const updateOrderStatusByAdmin = async (req, res) => {
   try {
@@ -468,39 +472,16 @@ const updateOrderStatusByAdmin = async (req, res) => {
 
     if (status) {
       order.status = status;
-      if (status === "cancelled") {
+      if (status === "cancelled" && previousStatus !== "cancelled") {
         order.cancelledAt = new Date();
-
-        // If order was cancelled and stock was deducted, return stock to SKUs
-        if (order.isStockDeducted) {
-          for (const item of order.items) {
-            const product = await Product.findById(item.productId);
-            if (product && Array.isArray(product.variants)) {
-              for (const variant of product.variants) {
-                if (Array.isArray(variant.skus)) {
-                  const skuObj = variant.skus.find(
-                    (s) =>
-                      s.sku?.toUpperCase() === item.skuId?.toUpperCase() ||
-                      s.size?.toUpperCase() === item.size?.toUpperCase()
-                  );
-                  if (skuObj) {
-                    skuObj.stock += item.quantity;
-                    if (skuObj.status === "Out of Stock" && skuObj.stock > 0) {
-                      skuObj.status = "Available";
-                    }
-                  }
-                }
-              }
-              await product.save();
-            }
+        await restockCancelledOrder(
+          order,
+          notes ? `Order cancelled: ${notes.trim()}` : "Order cancelled before shipping",
+          {
+            by: req.admin?._id || null,
+            byModel: req.admin ? "Admin" : "System",
+            byName: req.admin?.name || "Administrator",
           }
-          order.isStockDeducted = false;
-        }
-
-        // Release any active stock locks
-        await StockLock.updateMany(
-          { orderId: order._id, status: "active" },
-          { status: "released" }
         );
       }
     }
@@ -547,6 +528,78 @@ const updateOrderStatusByAdmin = async (req, res) => {
   }
 };
 
+/**
+ * Controller: partialCancelOrderItemByAdmin
+ * POST /api/orders/admin/:id/partial-cancel
+ */
+const partialCancelOrderItemByAdmin = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { skuId, qty, reason } = req.body;
+    const result = await partialCancelOrderItem({
+      orderIdOrNumber: id,
+      skuId,
+      qty,
+      reason,
+      actor: {
+        by: req.admin?._id || null,
+        byModel: req.admin ? "Admin" : "System",
+        byName: req.admin?.name || "Administrator",
+      },
+    });
+    return res.status(200).json({
+      success: true,
+      message: `Cancelled ${result.cancelledQty} pcs of ${skuId} on ${result.order.orderId} and restored SKU stock.`,
+      order: result.order,
+      item: result.item,
+    });
+  } catch (error) {
+    return res.status(400).json({
+      success: false,
+      message: error.message || "Failed to cancel order item.",
+    });
+  }
+};
+
+/**
+ * Controller: processOrderReturnByAdmin
+ * POST /api/orders/admin/:id/return
+ */
+const processOrderReturnByAdmin = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { skuId, qty, qcStatus = "PASS", reason, warehouseId } = req.body;
+    const result = await processOrderReturn({
+      orderIdOrNumber: id,
+      skuId,
+      qty,
+      qcStatus,
+      reason,
+      warehouseId,
+      actor: {
+        by: req.admin?._id || null,
+        byModel: req.admin ? "Admin" : "System",
+        byName: req.admin?.name || "QC Inspector",
+      },
+    });
+    return res.status(200).json({
+      success: true,
+      message:
+        String(qcStatus).toUpperCase() === "PASS"
+          ? `QC PASS: Restocked ${qty} pcs of ${skuId} to onHand.`
+          : `QC FAIL: Logged ${qty} pcs of ${skuId} as damaged stock.`,
+      order: result.order,
+      inventory: result.inventory,
+      movement: result.movement,
+    });
+  } catch (error) {
+    return res.status(400).json({
+      success: false,
+      message: error.message || "Failed to process return.",
+    });
+  }
+};
+
 module.exports = {
   createOrder,
   getOrderById,
@@ -554,4 +607,6 @@ module.exports = {
   cleanExpiredStockLocks,
   getAllOrdersForAdmin,
   updateOrderStatusByAdmin,
+  partialCancelOrderItemByAdmin,
+  processOrderReturnByAdmin,
 };

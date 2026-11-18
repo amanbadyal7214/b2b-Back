@@ -1,6 +1,7 @@
 const jwt = require("jsonwebtoken");
 const mongoose = require("mongoose");
 const User = require("../Model/UserModel");
+const Order = require("../Model/OrderModel");
 
 /**
  * Helper to compute discount tier and assigned slab from order volume string
@@ -490,16 +491,29 @@ const updateProfile = async (req, res) => {
 
 /**
  * Controller: getAllRetailers
- * GET /api/users
+ * GET /api/users or GET /api/retailers
  */
 const getAllRetailers = async (req, res) => {
   try {
-    const { search, status, storeFormat, page = 1, limit = 50 } = req.query;
+    const {
+      search,
+      status,
+      storeFormat,
+      sampleKitStatus,
+      role,
+      page = 1,
+      limit = 50,
+    } = req.query;
 
-    const filter = { role: "retailer" };
+    // Filter to retailers/buyers (exclude system admins by default)
+    const filter = role ? { role } : { role: { $ne: "admin" } };
 
     if (status && status !== "all") {
       filter.status = status;
+    }
+
+    if (sampleKitStatus && sampleKitStatus !== "all") {
+      filter.sampleKitStatus = sampleKitStatus;
     }
 
     if (storeFormat && storeFormat !== "all") {
@@ -515,40 +529,125 @@ const getAllRetailers = async (req, res) => {
         { companyName: new RegExp(q, "i") },
         { email: new RegExp(q, "i") },
         { phone: new RegExp(q, "i") },
+        { mobile: new RegExp(q, "i") },
         { gstin: new RegExp(q, "i") },
         { appRef: new RegExp(q, "i") },
         { cityState: new RegExp(q, "i") },
+        { city: new RegExp(q, "i") },
+        { state: new RegExp(q, "i") },
+        { "tradePass.passCode": new RegExp(q, "i") },
       ];
     }
 
-    const skip = (Math.max(1, Number(page)) - 1) * Number(limit);
-    const [retailers, totalCount, pendingCount, verifiedCount] = await Promise.all([
-      User.find(filter).sort({ createdAt: -1 }).skip(skip).limit(Number(limit)),
+    const pageNum = Math.max(1, Number(page));
+    const limitNum = Math.max(1, Math.min(200, Number(limit)));
+    const skip = (pageNum - 1) * limitNum;
+
+    const [
+      retailers,
+      totalCount,
+      pendingCount,
+      verifiedCount,
+      suspendedCount,
+      sampleKitCount,
+    ] = await Promise.all([
+      User.find(filter)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limitNum)
+        .lean(),
       User.countDocuments(filter),
-      User.countDocuments({ role: "retailer", status: "pending" }),
-      User.countDocuments({ role: "retailer", status: "verified" }),
+      User.countDocuments({ role: { $ne: "admin" }, status: "pending" }),
+      User.countDocuments({ role: { $ne: "admin" }, status: "verified" }),
+      User.countDocuments({ role: { $ne: "admin" }, status: "suspended" }),
+      User.countDocuments({ role: { $ne: "admin" }, sampleKitStatus: "requested" }),
     ]);
+
+    // Aggregate order metrics for this batch of retailers
+    const userIds = retailers.map((r) => r._id);
+    let orderStatsMap = {};
+    let totalGMV = 0;
+
+    if (userIds.length > 0) {
+      try {
+        const orderAgg = await Order.aggregate([
+          { $match: { userId: { $in: userIds } } },
+          {
+            $group: {
+              _id: "$userId",
+              orderCount: { $sum: 1 },
+              totalSpent: {
+                $sum: {
+                  $cond: [
+                    { $in: ["$paymentStatus", ["paid", "captured", "success"]] },
+                    { $ifNull: ["$pricing.totalPayable", 0] },
+                    0,
+                  ],
+                },
+              },
+              lastOrderAt: { $max: "$createdAt" },
+              lastOrderId: { $last: "$orderId" },
+            },
+          },
+        ]);
+
+        orderAgg.forEach((agg) => {
+          orderStatsMap[String(agg._id)] = {
+            orderCount: agg.orderCount || 0,
+            totalSpent: agg.totalSpent || 0,
+            lastOrderAt: agg.lastOrderAt || null,
+            lastOrderId: agg.lastOrderId || null,
+          };
+        });
+      } catch (aggErr) {
+        console.warn("[getAllRetailers] Order aggregation warning:", aggErr.message);
+      }
+    }
+
+    // Global revenue summary from paid/successful orders
+    try {
+      const gmvAgg = await Order.aggregate([
+        { $match: { paymentStatus: { $in: ["paid", "captured", "success"] } } },
+        { $group: { _id: null, total: { $sum: "$pricing.totalPayable" } } },
+      ]);
+      totalGMV = gmvAgg[0]?.total || 0;
+    } catch {
+      // ignore
+    }
+
+    const enrichedRetailers = retailers.map((r) => ({
+      ...r,
+      metrics: orderStatsMap[String(r._id)] || {
+        orderCount: 0,
+        totalSpent: 0,
+        lastOrderAt: null,
+        lastOrderId: null,
+      },
+    }));
 
     return res.status(200).json({
       success: true,
-      retailers,
+      retailers: enrichedRetailers,
       pagination: {
-        page: Number(page),
-        limit: Number(limit),
+        page: pageNum,
+        limit: limitNum,
         total: totalCount,
-        pages: Math.ceil(totalCount / Number(limit)),
+        pages: Math.ceil(totalCount / limitNum) || 1,
       },
       stats: {
         total: totalCount,
         pending: pendingCount,
         verified: verifiedCount,
+        suspended: suspendedCount,
+        sampleKitsRequested: sampleKitCount,
+        totalGMV,
       },
     });
   } catch (error) {
     console.error("[getAllRetailers] Error:", error);
     return res.status(500).json({
       success: false,
-      message: "Error fetching retailers list.",
+      message: "Error fetching retailers directory.",
       error: error.message,
     });
   }
@@ -556,7 +655,7 @@ const getAllRetailers = async (req, res) => {
 
 /**
  * Controller: getRetailerById
- * GET /api/users/:id
+ * GET /api/users/:id or GET /api/retailers/:id
  */
 const getRetailerById = async (req, res) => {
   try {
@@ -564,10 +663,10 @@ const getRetailerById = async (req, res) => {
 
     let retailer = null;
     if (mongoose.Types.ObjectId.isValid(id)) {
-      retailer = await User.findById(id);
+      retailer = await User.findById(id).lean();
     }
     if (!retailer) {
-      retailer = await User.findOne({ appRef: id });
+      retailer = await User.findOne({ appRef: id }).lean();
     }
 
     if (!retailer) {
@@ -577,15 +676,41 @@ const getRetailerById = async (req, res) => {
       });
     }
 
+    // Pull recent order manifests for this retailer
+    let orders = [];
+    try {
+      orders = await Order.find({ userId: retailer._id })
+        .sort({ createdAt: -1 })
+        .limit(30)
+        .lean();
+    } catch (orderErr) {
+      console.warn("[getRetailerById] Order lookup warning:", orderErr.message);
+    }
+
+    const paidOrders = orders.filter((o) =>
+      ["paid", "captured", "success"].includes(o.paymentStatus)
+    );
+    const totalSpent = paidOrders.reduce(
+      (sum, o) => sum + (o.pricing?.totalPayable || 0),
+      0
+    );
+
     return res.status(200).json({
       success: true,
       retailer,
+      orders,
+      metrics: {
+        totalOrders: orders.length,
+        paidOrders: paidOrders.length,
+        totalSpent,
+        lastOrderAt: orders[0]?.createdAt || null,
+      },
     });
   } catch (error) {
     console.error("[getRetailerById] Error:", error);
     return res.status(500).json({
       success: false,
-      message: "Error fetching retailer.",
+      message: "Error fetching retailer detail.",
       error: error.message,
     });
   }
@@ -598,12 +723,138 @@ const getRetailerById = async (req, res) => {
 const updateRetailerStatus = async (req, res) => {
   try {
     const { id } = req.params;
-    const { status, adminNotes } = req.body;
+    const {
+      status,
+      assignedSlab,
+      discountTier,
+      sampleKitStatus,
+      adminNotes,
+      gstin,
+      unregisteredGst,
+      storeName,
+      ownerName,
+      phone,
+    } = req.body;
 
-    if (!["pending", "verified", "rejected", "suspended"].includes(status)) {
+    const retailer = await User.findById(id);
+    if (!retailer) {
+      return res.status(404).json({
+        success: false,
+        message: "Retailer store not found.",
+      });
+    }
+
+    if (status) {
+      if (!["pending", "verified", "rejected", "suspended"].includes(status)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid status. Allowed: pending, verified, rejected, suspended",
+        });
+      }
+      retailer.status = status;
+      if (retailer.tradePass) {
+        retailer.tradePass.status = status === "verified" ? "active" : status;
+      }
+    }
+
+    if (assignedSlab !== undefined) retailer.assignedSlab = assignedSlab.trim();
+    if (discountTier !== undefined) retailer.discountTier = discountTier;
+    if (sampleKitStatus !== undefined) retailer.sampleKitStatus = sampleKitStatus;
+    if (adminNotes !== undefined) retailer.adminNotes = adminNotes;
+    if (gstin !== undefined) retailer.gstin = gstin.trim().toUpperCase();
+    if (typeof unregisteredGst === "boolean") retailer.unregisteredGst = unregisteredGst;
+    if (storeName) {
+      retailer.storeName = storeName.trim();
+      retailer.companyName = storeName.trim();
+    }
+    if (ownerName) {
+      retailer.ownerName = ownerName.trim();
+      retailer.name = ownerName.trim();
+    }
+    if (phone) {
+      retailer.phone = phone.trim();
+      retailer.mobile = phone.trim();
+    }
+
+    retailer.reviewedAt = new Date();
+    if (req.admin) retailer.reviewedBy = req.admin._id;
+
+    await retailer.save();
+
+    return res.status(200).json({
+      success: true,
+      message: `Retailer ${retailer.storeName || retailer.name} profile updated successfully.`,
+      retailer,
+    });
+  } catch (error) {
+    console.error("[updateRetailerStatus] Error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Error updating retailer.",
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * Controller: verifyRetailer
+ * PATCH /api/users/:id/verify
+ */
+const verifyRetailer = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { isVerified = true, adminNotes, assignedSlab } = req.body;
+
+    const retailer = await User.findById(id);
+    if (!retailer) {
+      return res.status(404).json({
+        success: false,
+        message: "Retailer store not found.",
+      });
+    }
+
+    const nextStatus = isVerified ? "verified" : "pending";
+    retailer.status = nextStatus;
+    if (assignedSlab) retailer.assignedSlab = assignedSlab.trim();
+    if (adminNotes !== undefined) retailer.adminNotes = adminNotes;
+    retailer.reviewedAt = new Date();
+    if (req.admin) retailer.reviewedBy = req.admin._id;
+
+    if (retailer.tradePass) {
+      retailer.tradePass.status = isVerified ? "active" : "pending";
+      if (assignedSlab) retailer.tradePass.rebate = assignedSlab.trim();
+    }
+
+    await retailer.save();
+
+    return res.status(200).json({
+      success: true,
+      message: `Retailer ${retailer.storeName || retailer.name} is now ${nextStatus}.`,
+      retailer,
+    });
+  } catch (error) {
+    console.error("[verifyRetailer] Error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Error verifying retailer.",
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * Controller: updateSampleKitStatus
+ * PATCH /api/users/:id/sample-kit
+ */
+const updateSampleKitStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { sampleKitStatus } = req.body;
+
+    if (!["none", "requested", "dispatched", "credited"].includes(sampleKitStatus)) {
       return res.status(400).json({
         success: false,
-        message: "Invalid status. Allowed: pending, verified, rejected, suspended",
+        message: "Invalid sample kit status. Allowed: none, requested, dispatched, credited",
       });
     }
 
@@ -615,27 +866,23 @@ const updateRetailerStatus = async (req, res) => {
       });
     }
 
-    retailer.status = status;
-    if (adminNotes !== undefined) retailer.adminNotes = adminNotes;
-    retailer.reviewedAt = new Date();
-    if (req.admin) retailer.reviewedBy = req.admin._id;
-
-    if (retailer.tradePass) {
-      retailer.tradePass.status = status === "verified" ? "active" : status;
+    retailer.sampleKitStatus = sampleKitStatus;
+    if (sampleKitStatus === "dispatched" || sampleKitStatus === "credited") {
+      retailer.requestSampleKit = true;
     }
 
     await retailer.save();
 
     return res.status(200).json({
       success: true,
-      message: `Retailer ${retailer.storeName} status updated to ${status}.`,
+      message: `Sample kit status updated to ${sampleKitStatus} for ${retailer.storeName || retailer.name}.`,
       retailer,
     });
   } catch (error) {
-    console.error("[updateRetailerStatus] Error:", error);
+    console.error("[updateSampleKitStatus] Error:", error);
     return res.status(500).json({
       success: false,
-      message: "Error updating retailer status.",
+      message: "Error updating sample kit status.",
       error: error.message,
     });
   }
@@ -679,5 +926,7 @@ module.exports = {
   getAllRetailers,
   getRetailerById,
   updateRetailerStatus,
+  verifyRetailer,
+  updateSampleKitStatus,
   deleteRetailer,
 };

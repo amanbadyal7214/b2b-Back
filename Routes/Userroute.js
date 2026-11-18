@@ -8,6 +8,8 @@ const {
   getAllRetailers,
   getRetailerById,
   updateRetailerStatus,
+  verifyRetailer,
+  updateSampleKitStatus,
   deleteRetailer,
 } = require("../Controller/Usercontroller");
 const { adminAccess } = require("../Controller/Admincontroller");
@@ -31,6 +33,8 @@ router.get("/", getAllRetailers);
 router.get("/retailers", getAllRetailers);
 router.get("/:id", getRetailerById);
 router.patch("/:id/status", updateRetailerStatus);
+router.patch("/:id/verify", verifyRetailer);
+router.patch("/:id/sample-kit", updateSampleKitStatus);
 router.delete("/:id", deleteRetailer);
 
 // Backward Compatibility

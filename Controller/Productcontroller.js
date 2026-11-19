@@ -1,6 +1,58 @@
 const Product = require("../Model/ProductModel");
 const Category = require("../Model/CategoryModel");
 const { uploadToCloudinary, deleteFromCloudinary } = require("../Config/cloudinary");
+const {
+  syncProductToInventory,
+  getInventoryMapForSkus,
+} = require("../Services/inventoryService");
+
+/**
+ * Helper: Attach live Inventory (onHand, reserved, available) onto product SKU lists
+ */
+const enrichProductsWithLiveInventory = async (productDocs = []) => {
+  const list = Array.isArray(productDocs) ? productDocs : [productDocs];
+  const allSkuIds = [];
+  for (const p of list) {
+    for (const v of p?.variants || p?.colors || []) {
+      for (const s of v?.skus || []) {
+        if (s?.sku) allSkuIds.push(String(s.sku).toUpperCase());
+      }
+    }
+  }
+
+  const invMap = await getInventoryMapForSkus(allSkuIds);
+  if (Object.keys(invMap).length === 0) return productDocs;
+
+  const enrichOne = (doc) => {
+    const obj = typeof doc.toObject === "function" ? doc.toObject({ virtuals: true }) : { ...doc };
+    const applyToVariantList = (variants) => {
+      if (!Array.isArray(variants)) return variants;
+      return variants.map((v) => {
+        if (!Array.isArray(v.skus)) return v;
+        const enrichedSkus = v.skus.map((s) => {
+          const live = invMap[String(s.sku || "").toUpperCase()];
+          if (!live) return s;
+          return {
+            ...s,
+            onHand: live.onHand,
+            reserved: live.reserved,
+            available: live.available,
+            reorderLevel: live.reorderLevel,
+            stock: live.available,
+            status: live.status,
+          };
+        });
+        return { ...v, skus: enrichedSkus };
+      });
+    };
+
+    if (Array.isArray(obj.variants)) obj.variants = applyToVariantList(obj.variants);
+    if (Array.isArray(obj.colors)) obj.colors = applyToVariantList(obj.colors);
+    return obj;
+  };
+
+  return Array.isArray(productDocs) ? list.map(enrichOne) : enrichOne(productDocs);
+};
 
 /**
  * Helper to build default product gallery angles
@@ -116,10 +168,12 @@ exports.getProducts = async (req, res) => {
     const limitNum = Math.max(1, Math.min(100, parseInt(limit, 10) || 50));
     const skip = (pageNum - 1) * limitNum;
 
-    const [total, products] = await Promise.all([
+    const [total, rawProducts] = await Promise.all([
       Product.countDocuments(query),
       Product.find(query).sort(sortOptions).skip(skip).limit(limitNum),
     ]);
+
+    const products = await enrichProductsWithLiveInventory(rawProducts);
 
     return res.status(200).json({
       success: true,
@@ -181,9 +235,11 @@ exports.getProductById = async (req, res) => {
       });
     }
 
+    const enrichedProduct = await enrichProductsWithLiveInventory(product);
+
     return res.status(200).json({
       success: true,
-      product,
+      product: enrichedProduct,
     });
   } catch (error) {
     console.error("Error fetching product by id:", error);
@@ -371,6 +427,13 @@ exports.createProduct = async (req, res) => {
 
     await newProduct.save();
 
+    // Sync newly created product SKUs into Inventory collection
+    await syncProductToInventory(newProduct, {
+      by: req.admin?._id || null,
+      byModel: req.admin ? "Admin" : "System",
+      byName: req.admin?.name || "Catalog Create",
+    });
+
     return res.status(201).json({
       success: true,
       message: "Product created successfully",
@@ -535,6 +598,13 @@ exports.updateProduct = async (req, res) => {
     Object.assign(product, payload);
     await product.save();
 
+    // Ensure any newly added SKUs/variants are synced into Inventory
+    await syncProductToInventory(product, {
+      by: req.admin?._id || null,
+      byModel: req.admin ? "Admin" : "System",
+      byName: req.admin?.name || "Catalog Update",
+    });
+
     return res.status(200).json({
       success: true,
       message: "Product updated successfully",
@@ -630,6 +700,10 @@ exports.seedProducts = async (req, res) => {
     }
 
     const inserted = await Product.insertMany(seedItems, { ordered: false });
+
+    for (const p of inserted) {
+      await syncProductToInventory(p, { byModel: "System", byName: "Catalog Seed" });
+    }
 
     return res.status(201).json({
       success: true,

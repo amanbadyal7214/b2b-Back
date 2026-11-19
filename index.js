@@ -18,6 +18,14 @@ const productRoutes = require("./Routes/Productroute");
 const cartRoutes = require("./Routes/Cartroute");
 const wishlistRoutes = require("./Routes/Wishlistroute");
 const pincodeRoutes = require("./Routes/Pincoderoute");
+const checkoutRoutes = require("./Routes/Checkoutroute");
+const orderRoutes = require("./Routes/Orderroute");
+const paymentRoutes = require("./Routes/Paymentroute");
+const inventoryRoutes = require("./Routes/Inventoryroute");
+const { autoSeedPincodesIfEmpty } = require("./Controller/Pincodecontroller");
+const { bootstrapAllProductsInventory } = require("./Services/inventoryService");
+const { startStockLockCron } = require("./Jobs/stockLockCron");
+const StockLock = require("./Model/StockLockModel");
 
 const app = express();
 
@@ -132,6 +140,17 @@ app.use("/api/wishlist", wishlistRoutes);
 app.use("/api/pincodes", pincodeRoutes);
 app.use("/api/pincode", pincodeRoutes);
 
+// Checkout, Order & Payment Routes (Full e-commerce flow: Add to Cart -> Order Placed)
+app.use("/api/checkout", checkoutRoutes);
+app.use("/api/orders", orderRoutes);
+app.use("/api/order", orderRoutes);
+app.use("/api/payments", paymentRoutes);
+app.use("/api/payment", paymentRoutes);
+
+// SKU Inventory Management, Stock Locks, Audit Movements & Multi-Warehouse Routes
+app.use("/api/inventory", inventoryRoutes);
+app.use("/api/warehouses", inventoryRoutes);
+
 // 404 Handler
 app.use((req, res) => {
   res.status(404).json({
@@ -167,8 +186,36 @@ if (mongoUri.includes("localhost:27017")) {
   mongoUri = mongoUri.replace("localhost:27017", "127.0.0.1:27017");
 }
 
-mongoose.connection.on("connected", () => {
+mongoose.connection.on("connected", async () => {
   console.log(`[Database] MongoDB connected successfully to ${mongoUri.replace(/:([^:@]{4})[^:@]*@/, ":****@")}`);
+  autoSeedPincodesIfEmpty();
+
+  // Migrate away from legacy TTL index on StockLock.expiresAt so cron releases reserved stock safely
+  try {
+    const indexes = await StockLock.collection.indexes();
+    const ttlIdx = indexes.find(
+      (idx) => idx.key && idx.key.expiresAt === 1 && idx.expireAfterSeconds !== undefined
+    );
+    if (ttlIdx) {
+      await StockLock.collection.dropIndex(ttlIdx.name);
+      await StockLock.collection.createIndex({ expiresAt: 1 });
+      console.log("[Inventory] Migrated StockLock.expiresAt from TTL index to standard cron index.");
+    }
+  } catch (idxErr) {
+    // Collection may not exist yet; safe to ignore
+  }
+
+  // Bootstrap default warehouse & sync any unindexed catalog SKUs into Inventory
+  bootstrapAllProductsInventory()
+    .then((res) => {
+      console.log(`[Inventory] Ready: ${res.skusSynced} SKU(s) synced across ${res.productsCount} product(s).`);
+    })
+    .catch((err) => {
+      console.warn("[Inventory] Bootstrap note:", err.message);
+    });
+
+  // Start automatic 60-second lock expiry cron job
+  startStockLockCron(60 * 1000);
 });
 
 mongoose.connection.on("error", (err) => {

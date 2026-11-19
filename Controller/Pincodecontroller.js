@@ -463,6 +463,22 @@ const seedDefaultPincodes = async (req, res) => {
   }
 };
 
+/**
+ * Routine: autoSeedPincodesIfEmpty
+ * Runs automatically when server starts and connects to DB
+ */
+const autoSeedPincodesIfEmpty = async () => {
+  try {
+    const count = await Pincode.countDocuments();
+    if (count === 0) {
+      await Pincode.insertMany(DEFAULT_HUBS);
+      console.log(`[Pincode] Automatically seeded ${DEFAULT_HUBS.length} standard wholesale dispatch hubs.`);
+    }
+  } catch (err) {
+    console.warn("[Pincode] Auto-seed verification note:", err.message);
+  }
+};
+
 module.exports = {
   getAllPincodes,
   createPincode,
@@ -472,4 +488,5 @@ module.exports = {
   deletePincode,
   checkPincodeAvailability,
   seedDefaultPincodes,
+  autoSeedPincodesIfEmpty,
 };

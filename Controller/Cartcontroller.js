@@ -1,6 +1,25 @@
 const mongoose = require("mongoose");
 const Cart = require("../Model/CartModel");
 const Product = require("../Model/ProductModel");
+const { getAvailableStockForSku } = require("../Services/inventoryService");
+
+/**
+ * Helper: Locate Product safely by MongoDB ObjectId, slug, or SKU
+ */
+const findProductByIdentifier = async (identifier) => {
+  if (!identifier) return null;
+  const str = String(identifier).trim();
+  if (/^[0-9a-fA-F]{24}$/.test(str)) {
+    const byId = await Product.findById(str);
+    if (byId) return byId;
+  }
+  return Product.findOne({
+    $or: [
+      { slug: { $regex: new RegExp(`^${str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i") } },
+      { sku: { $regex: new RegExp(`^${str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i") } },
+    ],
+  });
+};
 
 /**
  * Helper to resolve active Cart for user or guest
@@ -77,7 +96,9 @@ const revalidateCartItems = async (cart) => {
       product.price ??
       item.price;
 
-    const availableStock = skuObj ? skuObj.stock : 99;
+    // Live available = onHand - reserved (read-only; adding to cart never modifies inventory)
+    const invCheck = await getAvailableStockForSku(skuObj?.sku || item.skuId, product._id);
+    const availableStock = invCheck.exists ? invCheck.available : (skuObj ? skuObj.stock : 0);
     const isOutOfStock = availableStock <= 0;
 
     let adjustedQty = item.quantity;
@@ -206,8 +227,8 @@ const addToCart = async (req, res) => {
 
     const qty = Math.max(1, parseInt(quantity, 10) || 1);
 
-    // 1. Fetch Product
-    const product = await Product.findById(productId);
+    // 1. Fetch Product (supports Mongo _id, slug, or SKU)
+    const product = await findProductByIdentifier(productId);
     if (!product) {
       return res.status(404).json({
         success: false,
@@ -245,12 +266,23 @@ const addToCart = async (req, res) => {
       skuId ||
       `${product.sku || "BVB"}-${colCode}-${size.toUpperCase()}`;
 
-    // Check inventory
-    if (skuObj && skuObj.stock < qty) {
+    // Check live available = onHand - reserved (cart add does NOT reserve or deduct stock)
+    const liveInv = await getAvailableStockForSku(finalSkuCode, product._id);
+    const liveAvailable = liveInv.exists ? liveInv.available : (skuObj ? skuObj.stock : 0);
+
+    if (liveAvailable <= 0) {
       return res.status(400).json({
         success: false,
-        message: `Only ${skuObj.stock} units available for size ${size}. Cannot add ${qty} units.`,
-        availableStock: skuObj.stock,
+        message: `${product.name} (Size ${size}) is currently Out of Stock.`,
+        availableStock: 0,
+      });
+    }
+
+    if (liveAvailable < qty) {
+      return res.status(400).json({
+        success: false,
+        message: `Sirf ${liveAvailable} pcs available hain for Size ${size}. Aap ${qty} pcs add nahi kar sakte.`,
+        availableStock: liveAvailable,
       });
     }
 
@@ -289,11 +321,11 @@ const addToCart = async (req, res) => {
       const existing = cart.items[existingIndex];
       const newTotalQty = existing.quantity + qty;
 
-      if (skuObj && skuObj.stock < newTotalQty) {
+      if (liveAvailable < newTotalQty) {
         return res.status(400).json({
           success: false,
-          message: `Bag already contains ${existing.quantity} units. Adding ${qty} exceeds available stock (${skuObj.stock}).`,
-          availableStock: skuObj.stock,
+          message: `Bag already contains ${existing.quantity} units. Adding ${qty} exceeds available stock (${liveAvailable}).`,
+          availableStock: liveAvailable,
         });
       }
 
@@ -399,11 +431,13 @@ const updateCartItem = async (req, res) => {
             s.sku?.toUpperCase() === skuId?.toUpperCase() ||
             s.size?.toUpperCase() === item.size?.toUpperCase()
         );
-        if (skuObj && skuObj.stock < targetQty) {
+        const liveInv = await getAvailableStockForSku(skuObj?.sku || skuId, product._id);
+        const liveAvailable = liveInv.exists ? liveInv.available : (skuObj ? skuObj.stock : 0);
+        if (liveAvailable < targetQty) {
           return res.status(400).json({
             success: false,
-            message: `Only ${skuObj.stock} units available for this size.`,
-            availableStock: skuObj.stock,
+            message: `Sirf ${liveAvailable} pcs available hain for this size. Isse zyada add nahi ho sakta.`,
+            availableStock: liveAvailable,
           });
         }
       }
@@ -536,7 +570,7 @@ const mergeGuestCart = async (req, res) => {
     for (const item of guestItems) {
       if (!item.productId || !item.size) continue;
 
-      const product = await Product.findById(item.productId);
+      const product = await findProductByIdentifier(item.productId);
       if (!product) continue;
 
       const variant =
@@ -557,6 +591,10 @@ const mergeGuestCart = async (req, res) => {
         item.skuId ||
         `${product.sku}-${(item.color || "COL").substring(0, 3).toUpperCase()}-${item.size.toUpperCase()}`;
 
+      const liveInv = await getAvailableStockForSku(targetSku, product._id);
+      const liveAvailable = liveInv.exists ? liveInv.available : (skuObj ? skuObj.stock : 0);
+      if (liveAvailable <= 0) continue;
+
       const existingIndex = userCart.items.findIndex(
         (i) => i.skuId?.toUpperCase() === targetSku.toUpperCase()
       );
@@ -566,7 +604,7 @@ const mergeGuestCart = async (req, res) => {
       if (existingIndex > -1) {
         const existing = userCart.items[existingIndex];
         const newTotal = Math.max(existing.quantity, qtyToAdd);
-        existing.quantity = skuObj ? Math.min(newTotal, skuObj.stock) : newTotal;
+        existing.quantity = Math.min(newTotal, liveAvailable);
       } else {
         const unitPrice =
           variant?.wholesalePrice ??
@@ -584,7 +622,7 @@ const mergeGuestCart = async (req, res) => {
           color: variant?.color || item.color || "Standard",
           colorCode: variant?.colorCode || item.colorCode || "#121214",
           size: item.size.toUpperCase(),
-          quantity: skuObj ? Math.min(qtyToAdd, skuObj.stock) : qtyToAdd,
+          quantity: Math.min(qtyToAdd, liveAvailable),
           price: unitPrice,
           mrp: variant?.mrp ?? product.retailPrice ?? 0,
           image: variant?.gallery?.front || variant?.images?.[0] || product.image || "",

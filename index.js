@@ -22,6 +22,7 @@ const checkoutRoutes = require("./Routes/Checkoutroute");
 const orderRoutes = require("./Routes/Orderroute");
 const paymentRoutes = require("./Routes/Paymentroute");
 const inventoryRoutes = require("./Routes/Inventoryroute");
+const featuredCollectionRoutes = require("./Routes/FeaturedCollectionroute");
 const { autoSeedPincodesIfEmpty } = require("./Controller/Pincodecontroller");
 const { bootstrapAllProductsInventory } = require("./Services/inventoryService");
 const { startStockLockCron } = require("./Jobs/stockLockCron");
@@ -96,6 +97,12 @@ app.use("/api/retailer", userRoutes);
 // Product Category Routes
 app.use("/api/categories", categoryRoutes);
 app.use("/api/category", categoryRoutes);
+
+// Featured Collections & Product Reels Routes
+app.use("/api/featured-collections", featuredCollectionRoutes);
+app.use("/api/featured-collection", featuredCollectionRoutes);
+app.use("/api/collections/featured", featuredCollectionRoutes);
+app.use("/api/reels", featuredCollectionRoutes);
 
 // Product Type Routes
 app.use("/api/product-types", productTypeRoutes);

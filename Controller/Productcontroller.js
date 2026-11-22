@@ -79,6 +79,7 @@ exports.getProducts = async (req, res) => {
       availability,
       isLatestDrop,
       isBestseller,
+      isHeroArrival,
       search,
       q,
       color,
@@ -118,6 +119,10 @@ exports.getProducts = async (req, res) => {
 
     if (isBestseller !== undefined) {
       query.isBestseller = isBestseller === "true" || isBestseller === true;
+    }
+
+    if (isHeroArrival !== undefined) {
+      query.isHeroArrival = isHeroArrival === "true" || isHeroArrival === true;
     }
 
     const searchTerm = (search || q || "").trim();
@@ -423,6 +428,10 @@ exports.createProduct = async (req, res) => {
       imagePublicId,
       variants: formattedVariants,
       colors: formattedVariants,
+      isLatestDrop: payload.isLatestDrop === true || payload.isLatestDrop === "true",
+      isBestseller: payload.isBestseller === true || payload.isBestseller === "true",
+      isHeroArrival: payload.isHeroArrival === true || payload.isHeroArrival === "true",
+      heroTag: typeof payload.heroTag === "string" ? payload.heroTag.trim() : "",
     });
 
     await newProduct.save();
@@ -593,6 +602,19 @@ exports.updateProduct = async (req, res) => {
 
       payload.variants = formattedVariants;
       payload.colors = formattedVariants;
+    }
+
+    if (payload.isLatestDrop !== undefined) {
+      payload.isLatestDrop = payload.isLatestDrop === true || payload.isLatestDrop === "true";
+    }
+    if (payload.isBestseller !== undefined) {
+      payload.isBestseller = payload.isBestseller === true || payload.isBestseller === "true";
+    }
+    if (payload.isHeroArrival !== undefined) {
+      payload.isHeroArrival = payload.isHeroArrival === true || payload.isHeroArrival === "true";
+    }
+    if (payload.heroTag !== undefined && typeof payload.heroTag === "string") {
+      payload.heroTag = payload.heroTag.trim();
     }
 
     Object.assign(product, payload);

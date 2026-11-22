@@ -239,6 +239,15 @@ const productSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    isHeroArrival: {
+      type: Boolean,
+      default: false,
+    },
+    heroTag: {
+      type: String,
+      default: "",
+      trim: true,
+    },
     status: {
       type: String,
       enum: ["Active", "Draft", "Archived"],

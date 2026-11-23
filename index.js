@@ -2,6 +2,7 @@ const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
 const dotenv = require("dotenv");
+const path = require("path");
 
 dotenv.config();
 
@@ -42,6 +43,9 @@ app.use(
 // Body parser
 app.use(express.json({ limit: "60mb" }));
 app.use(express.urlencoded({ extended: true, limit: "60mb" }));
+
+// Static uploads directory for lookbook PDFs and media
+app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 // Service status & endpoint map
 app.get("/", (req, res) => {

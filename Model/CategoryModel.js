@@ -43,6 +43,26 @@ const categorySchema = new mongoose.Schema(
       default: "",
       trim: true,
     },
+    cataloguePdf: {
+      type: String,
+      default: "",
+      trim: true,
+    },
+    cataloguePdfPublicId: {
+      type: String,
+      default: "",
+      trim: true,
+    },
+    cataloguePdfName: {
+      type: String,
+      default: "",
+      trim: true,
+    },
+    cataloguePdfSize: {
+      type: String,
+      default: "",
+      trim: true,
+    },
     itemCount: {
       type: Number,
       default: 0,

@@ -27,12 +27,23 @@ exports.getCategories = async (req, res) => {
 };
 
 /**
- * Create a new product category (Supports image upload via Multer or base64/URL)
+ * Create a new product category (Supports image & catalogue PDF upload via Multer or base64/URL)
  * POST /api/categories
  */
 exports.createCategory = async (req, res) => {
   try {
-    const { name, description, code, status, productType, type, image } = req.body;
+    const {
+      name,
+      description,
+      code,
+      status,
+      productType,
+      type,
+      image,
+      cataloguePdf,
+      cataloguePdfName,
+      cataloguePdfSize,
+    } = req.body;
 
     if (!name || !name.trim()) {
       return res.status(400).json({
@@ -65,26 +76,34 @@ exports.createCategory = async (req, res) => {
       }
     }
 
-    // Handle Cloudinary Image Upload
+    const imageFile =
+      req.files?.image?.[0] ||
+      (req.file?.fieldname === "image" ? req.file : null);
+
+    const pdfFile =
+      req.files?.pdf?.[0] ||
+      req.files?.cataloguePdf?.[0] ||
+      (req.file?.fieldname === "pdf" || req.file?.fieldname === "cataloguePdf"
+        ? req.file
+        : null);
+
+    // Handle Image Upload
     let imageUrl = "";
     let imagePublicId = "";
 
-    // 1. If uploaded as file via multer
-    if (req.file && req.file.buffer) {
+    if (imageFile && imageFile.buffer) {
       try {
-        const uploadResult = await uploadToCloudinary(req.file.buffer, "b2b_categories");
+        const uploadResult = await uploadToCloudinary(imageFile.buffer, "b2b_categories");
         imageUrl = uploadResult.url;
         imagePublicId = uploadResult.public_id;
       } catch (uploadErr) {
-        console.error("Error uploading file to Cloudinary:", uploadErr);
+        console.error("Error uploading image file to Cloudinary:", uploadErr);
         return res.status(500).json({
           success: false,
           message: `Failed to upload image to Cloudinary: ${uploadErr.message || "Network/Cloud error"}`,
         });
       }
-    }
-    // 2. If uploaded as base64 data URI or string URL in body
-    else if (image && typeof image === "string" && image.trim()) {
+    } else if (image && typeof image === "string" && image.trim()) {
       try {
         const uploadResult = await uploadToCloudinary(image.trim(), "b2b_categories");
         imageUrl = uploadResult.url;
@@ -98,6 +117,34 @@ exports.createCategory = async (req, res) => {
       }
     }
 
+    // Handle Catalogue PDF Upload
+    let pdfUrl = "";
+    let pdfPublicId = "";
+    let pdfName = cataloguePdfName || "";
+    let pdfSize = cataloguePdfSize || "";
+
+    if (pdfFile && pdfFile.buffer) {
+      pdfName = pdfFile.originalname || `${trimmedName}-Catalogue.pdf`;
+      const sizeBytes = pdfFile.size || pdfFile.buffer.length;
+      pdfSize =
+        sizeBytes < 1024 * 1024
+          ? `${Math.round(sizeBytes / 1024)} KB`
+          : `${(sizeBytes / (1024 * 1024)).toFixed(1)} MB`;
+
+      try {
+        const uploadResult = await uploadToCloudinary(pdfFile.buffer, "b2b_catalogues", "auto");
+        pdfUrl = uploadResult.url;
+        pdfPublicId = uploadResult.public_id;
+      } catch (pdfErr) {
+        console.warn("Cloudinary PDF upload failed, fallback to base64 data URI:", pdfErr.message);
+        pdfUrl = `data:application/pdf;base64,${pdfFile.buffer.toString("base64")}`;
+      }
+    } else if (cataloguePdf && typeof cataloguePdf === "string" && cataloguePdf.trim()) {
+      pdfUrl = cataloguePdf.trim();
+      pdfName = cataloguePdfName || `${trimmedName}-Catalogue.pdf`;
+      pdfSize = cataloguePdfSize || "Digital PDF";
+    }
+
     const newCategory = new Category({
       name: trimmedName,
       description: description ? description.trim() : "",
@@ -106,6 +153,10 @@ exports.createCategory = async (req, res) => {
       productType: resolvedTypeId,
       image: imageUrl,
       imagePublicId: imagePublicId,
+      cataloguePdf: pdfUrl,
+      cataloguePdfPublicId: pdfPublicId,
+      cataloguePdfName: pdfName,
+      cataloguePdfSize: pdfSize,
     });
 
     const savedCategory = await newCategory.save();
@@ -127,13 +178,24 @@ exports.createCategory = async (req, res) => {
 };
 
 /**
- * Update a category (Supports updating image via Multer or base64/URL)
+ * Update a category (Supports updating image & catalogue PDF via Multer or base64/URL)
  * PUT /api/categories/:id
  */
 exports.updateCategory = async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, description, code, status, productType, type, image } = req.body;
+    const {
+      name,
+      description,
+      code,
+      status,
+      productType,
+      type,
+      image,
+      cataloguePdf,
+      cataloguePdfName,
+      cataloguePdfSize,
+    } = req.body;
 
     const category = await Category.findById(id);
     if (!category) {
@@ -164,13 +226,24 @@ exports.updateCategory = async (req, res) => {
       }
     }
 
+    const imageFile =
+      req.files?.image?.[0] ||
+      (req.file?.fieldname === "image" ? req.file : null);
+
+    const pdfFile =
+      req.files?.pdf?.[0] ||
+      req.files?.cataloguePdf?.[0] ||
+      (req.file?.fieldname === "pdf" || req.file?.fieldname === "cataloguePdf"
+        ? req.file
+        : null);
+
     // Handle Image Replacement
-    if (req.file && req.file.buffer) {
+    if (imageFile && imageFile.buffer) {
       try {
         if (category.imagePublicId) {
           await deleteFromCloudinary(category.imagePublicId);
         }
-        const uploadResult = await uploadToCloudinary(req.file.buffer, "b2b_categories");
+        const uploadResult = await uploadToCloudinary(imageFile.buffer, "b2b_categories");
         category.image = uploadResult.url;
         category.imagePublicId = uploadResult.public_id;
       } catch (uploadErr) {
@@ -198,6 +271,48 @@ exports.updateCategory = async (req, res) => {
         }
       } else if (typeof image === "string") {
         category.image = image.trim();
+      }
+    }
+
+    // Handle Catalogue PDF Replacement
+    if (pdfFile && pdfFile.buffer) {
+      try {
+        if (category.cataloguePdfPublicId) {
+          await deleteFromCloudinary(category.cataloguePdfPublicId, "auto");
+        }
+        const uploadResult = await uploadToCloudinary(pdfFile.buffer, "b2b_catalogues", "auto");
+        category.cataloguePdf = uploadResult.url;
+        category.cataloguePdfPublicId = uploadResult.public_id;
+        category.cataloguePdfName = pdfFile.originalname || `${category.name}-Catalogue.pdf`;
+        const sizeBytes = pdfFile.size || pdfFile.buffer.length;
+        category.cataloguePdfSize =
+          sizeBytes < 1024 * 1024
+            ? `${Math.round(sizeBytes / 1024)} KB`
+            : `${(sizeBytes / (1024 * 1024)).toFixed(1)} MB`;
+      } catch (pdfErr) {
+        console.warn("Cloudinary PDF upload failed, fallback to base64 data URI:", pdfErr.message);
+        category.cataloguePdf = `data:application/pdf;base64,${pdfFile.buffer.toString("base64")}`;
+        category.cataloguePdfName = pdfFile.originalname || `${category.name}-Catalogue.pdf`;
+        const sizeBytes = pdfFile.size || pdfFile.buffer.length;
+        category.cataloguePdfSize =
+          sizeBytes < 1024 * 1024
+            ? `${Math.round(sizeBytes / 1024)} KB`
+            : `${(sizeBytes / (1024 * 1024)).toFixed(1)} MB`;
+      }
+    } else if (cataloguePdf !== undefined) {
+      if (cataloguePdf === "" || cataloguePdf === null) {
+        // User requested removal of PDF
+        if (category.cataloguePdfPublicId) {
+          await deleteFromCloudinary(category.cataloguePdfPublicId, "auto");
+        }
+        category.cataloguePdf = "";
+        category.cataloguePdfPublicId = "";
+        category.cataloguePdfName = "";
+        category.cataloguePdfSize = "";
+      } else if (typeof cataloguePdf === "string" && cataloguePdf.trim()) {
+        category.cataloguePdf = cataloguePdf.trim();
+        if (cataloguePdfName) category.cataloguePdfName = cataloguePdfName.trim();
+        if (cataloguePdfSize) category.cataloguePdfSize = cataloguePdfSize.trim();
       }
     }
 
@@ -238,6 +353,9 @@ exports.deleteCategory = async (req, res) => {
     // Clean up Cloudinary asset
     if (deleted.imagePublicId) {
       await deleteFromCloudinary(deleted.imagePublicId);
+    }
+    if (deleted.cataloguePdfPublicId) {
+      await deleteFromCloudinary(deleted.cataloguePdfPublicId, "auto");
     }
 
     return res.status(200).json({

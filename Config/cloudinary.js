@@ -16,10 +16,14 @@ cloudinary.config({
 const storage = multer.memoryStorage();
 
 const fileFilter = (req, file, cb) => {
-  if (file.mimetype.startsWith("image/") || file.mimetype.startsWith("video/")) {
+  if (
+    file.mimetype.startsWith("image/") ||
+    file.mimetype.startsWith("video/") ||
+    file.mimetype === "application/pdf"
+  ) {
     cb(null, true);
   } else {
-    cb(new Error("Only image and video files are allowed (JPG, PNG, WEBP, AVIF, GIF, MP4, WEBM)"), false);
+    cb(new Error("Only image, video, and PDF files are allowed (JPG, PNG, WEBP, AVIF, MP4, PDF)"), false);
   }
 };
 
@@ -56,7 +60,9 @@ const uploadToCloudinary = async (fileSource, folder = "b2b_categories", resourc
     }
     // If buffer provided, convert to base64 data URI
     if (Buffer.isBuffer(fileSource)) {
-      const mime = resourceType === "video" ? "video/mp4" : "image/jpeg";
+      let mime = "image/jpeg";
+      if (resourceType === "video") mime = "video/mp4";
+      if (resourceType === "raw" || resourceType === "pdf") mime = "application/pdf";
       const dataUri = `data:${mime};base64,${fileSource.toString("base64")}`;
       return { url: dataUri, public_id: "" };
     }

@@ -8,10 +8,16 @@ const {
 } = require("../Controller/Categorycontroller");
 const { upload } = require("../Config/cloudinary");
 
-// Category REST endpoints with image upload support
+const categoryUpload = upload.fields([
+  { name: "image", maxCount: 1 },
+  { name: "pdf", maxCount: 1 },
+  { name: "cataloguePdf", maxCount: 1 },
+]);
+
+// Category REST endpoints with image & catalogue PDF upload support
 router.get("/", getCategories);
-router.post("/", upload.single("image"), createCategory);
-router.put("/:id", upload.single("image"), updateCategory);
+router.post("/", categoryUpload, createCategory);
+router.put("/:id", categoryUpload, updateCategory);
 router.delete("/:id", deleteCategory);
 
 module.exports = router;

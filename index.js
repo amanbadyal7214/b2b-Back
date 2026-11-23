@@ -25,6 +25,7 @@ const paymentRoutes = require("./Routes/Paymentroute");
 const inventoryRoutes = require("./Routes/Inventoryroute");
 const invoiceRoutes = require("./Routes/Invoiceroute");
 const featuredCollectionRoutes = require("./Routes/FeaturedCollectionroute");
+const blogRoutes = require("./Routes/Blogroute");
 const { autoSeedPincodesIfEmpty } = require("./Controller/Pincodecontroller");
 const { bootstrapAllProductsInventory } = require("./Services/inventoryService");
 const { startStockLockCron } = require("./Jobs/stockLockCron");
@@ -166,6 +167,10 @@ app.use("/api/warehouses", inventoryRoutes);
 // GST Tax Invoices, Credit Notes & E-Way Billing Documents
 app.use("/api/invoices", invoiceRoutes);
 app.use("/api/invoice", invoiceRoutes);
+
+// Blog CMS, Textile Knowledge Engine & B2B Editorial Articles
+app.use("/api/blogs", blogRoutes);
+app.use("/api/blog", blogRoutes);
 
 // 404 Handler
 app.use((req, res) => {

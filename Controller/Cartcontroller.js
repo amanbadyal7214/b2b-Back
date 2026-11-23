@@ -204,9 +204,9 @@ const revalidateCartItems = async (cart) => {
 const getCart = async (req, res) => {
   try {
     const userId = req.user ? req.user._id : null;
-    const guestId = req.headers["x-guest-id"] || req.query.guestId;
 
-    if (!userId && !guestId) {
+    // Guest cart is kept exclusively in localStorage; do not create records in MongoDB
+    if (!userId) {
       return res.status(200).json({
         success: true,
         cart: {
@@ -218,7 +218,7 @@ const getCart = async (req, res) => {
       });
     }
 
-    const cart = await findOrCreateCart(userId, guestId);
+    const cart = await findOrCreateCart(userId, null);
     if (!cart) {
       return res.status(200).json({
         success: true,
@@ -264,13 +264,22 @@ const getCart = async (req, res) => {
 const addToCart = async (req, res) => {
   try {
     const userId = req.user ? req.user._id : null;
+
+    // Guest cart is kept exclusively in client-side localStorage until login
+    if (!userId) {
+      return res.status(200).json({
+        success: true,
+        message: "Guest cart is managed client-side in localStorage.",
+        cart: { items: [], subtotal: 0, totalQuantity: 0 },
+      });
+    }
+
     const {
       productId,
       skuId,
       color,
       size,
       quantity = 1,
-      guestId = req.headers["x-guest-id"],
     } = req.body;
 
     if (!productId || !size) {
@@ -440,7 +449,14 @@ const addToCart = async (req, res) => {
 const updateCartItem = async (req, res) => {
   try {
     const userId = req.user ? req.user._id : null;
-    const { skuId, quantity, guestId = req.headers["x-guest-id"] } = req.body;
+    if (!userId) {
+      return res.status(200).json({
+        success: true,
+        message: "Guest cart is managed client-side in localStorage.",
+      });
+    }
+
+    const { skuId, quantity } = req.body;
 
     if (!skuId) {
       return res.status(400).json({
@@ -449,7 +465,7 @@ const updateCartItem = async (req, res) => {
       });
     }
 
-    const cart = await findOrCreateCart(userId, guestId);
+    const cart = await findOrCreateCart(userId, null);
     if (!cart) {
       return res.status(404).json({
         success: false,
@@ -531,8 +547,14 @@ const updateCartItem = async (req, res) => {
 const removeFromCart = async (req, res) => {
   try {
     const userId = req.user ? req.user._id : null;
+    if (!userId) {
+      return res.status(200).json({
+        success: true,
+        message: "Guest cart is managed client-side in localStorage.",
+      });
+    }
+
     const skuId = req.params.skuId || req.body.skuId;
-    const guestId = req.headers["x-guest-id"] || req.query.guestId;
 
     if (!skuId) {
       return res.status(400).json({
@@ -541,7 +563,7 @@ const removeFromCart = async (req, res) => {
       });
     }
 
-    const cart = await findOrCreateCart(userId, guestId);
+    const cart = await findOrCreateCart(userId, null);
     if (!cart) {
       return res.status(404).json({
         success: false,
@@ -625,15 +647,29 @@ const mergeGuestCart = async (req, res) => {
     for (const item of guestItems) {
       if (!item.productId || !item.size) continue;
 
-      const product = await findProductByIdentifier(item.productId);
-      if (!product) continue;
+      let product = await findProductByIdentifier(item.productId);
+      if (!product && item.productSku) {
+        try {
+          product = await Product.findOne({ sku: { $regex: new RegExp(`^${item.productSku.trim()}$`, "i") } });
+        } catch {}
+      }
+      if (!product && item.skuId) {
+        try {
+          product = await Product.findOne({ "variants.skus.sku": { $regex: new RegExp(`^${item.skuId.trim()}$`, "i") } });
+        } catch {}
+      }
+      if (!product && item.productName) {
+        try {
+          product = await Product.findOne({ name: { $regex: new RegExp(`^${item.productName.trim()}$`, "i") } });
+        } catch {}
+      }
 
       const variant =
-        product.variants?.find(
+        product?.variants?.find(
           (v) =>
             v.color?.toLowerCase() === item.color?.toLowerCase() ||
             v.name?.toLowerCase() === item.color?.toLowerCase()
-        ) || product.variants?.[0];
+        ) || product?.variants?.[0];
 
       const skuObj = variant?.skus?.find(
         (s) =>
@@ -644,10 +680,18 @@ const mergeGuestCart = async (req, res) => {
       const targetSku =
         skuObj?.sku ||
         item.skuId ||
-        `${product.sku}-${(item.color || "COL").substring(0, 3).toUpperCase()}-${item.size.toUpperCase()}`;
+        `${product?.sku || "SKU"}-${(item.color || "COL").substring(0, 3).toUpperCase()}-${String(item.size).toUpperCase()}`;
 
-      const liveInv = await getAvailableStockForSku(targetSku, product._id);
-      const liveAvailable = liveInv.exists ? liveInv.available : (skuObj ? skuObj.stock : 0);
+      let liveAvailable = 100;
+      if (product) {
+        try {
+          const liveInv = await getAvailableStockForSku(targetSku, product._id);
+          liveAvailable = liveInv.exists ? liveInv.available : (skuObj ? skuObj.stock : (product.countInStock ?? 100));
+        } catch {
+          liveAvailable = 100;
+        }
+      }
+
       if (liveAvailable <= 0) continue;
 
       const existingIndex = userCart.items.findIndex(
@@ -664,24 +708,24 @@ const mergeGuestCart = async (req, res) => {
         const unitPrice =
           variant?.wholesalePrice ??
           variant?.price ??
-          product.wholesalePrice ??
-          product.price ??
+          product?.wholesalePrice ??
+          product?.price ??
           item.price ??
           0;
 
         userCart.items.push({
-          productId: product._id,
+          productId: product ? product._id : (/^[0-9a-fA-F]{24}$/.test(String(item.productId)) ? item.productId : new mongoose.Types.ObjectId()),
           skuId: targetSku,
-          productSku: product.sku || "",
-          productName: product.name,
+          productSku: product?.sku || item.productSku || "",
+          productName: product?.name || item.productName || "Wholesale Garment",
           color: variant?.color || item.color || "Standard",
           colorCode: variant?.colorCode || item.colorCode || "#121214",
-          size: item.size.toUpperCase(),
+          size: String(item.size).toUpperCase(),
           quantity: Math.min(qtyToAdd, liveAvailable),
           price: unitPrice,
-          mrp: variant?.mrp ?? product.retailPrice ?? 0,
-          image: variant?.gallery?.front || variant?.images?.[0] || product.image || "",
-          moq: product.moq ? parseInt(product.moq, 10) || 1 : 1,
+          mrp: variant?.mrp ?? product?.retailPrice ?? item.mrp ?? unitPrice,
+          image: variant?.gallery?.front || variant?.images?.[0] || product?.image || item.image || "",
+          moq: product?.moq ? parseInt(product.moq, 10) || 1 : 1,
           addedAt: new Date(),
         });
       }
@@ -720,9 +764,19 @@ const mergeGuestCart = async (req, res) => {
 const clearCart = async (req, res) => {
   try {
     const userId = req.user ? req.user._id : null;
-    const guestId = req.headers["x-guest-id"] || req.query.guestId;
+    if (!userId) {
+      return res.status(200).json({
+        success: true,
+        message: "Guest cart cleared in localStorage.",
+        cart: {
+          items: [],
+          subtotal: 0,
+          totalQuantity: 0,
+        },
+      });
+    }
 
-    const cart = await findOrCreateCart(userId, guestId);
+    const cart = await findOrCreateCart(userId, null);
     if (cart) {
       cart.items = [];
       cart.lastActivityAt = new Date();

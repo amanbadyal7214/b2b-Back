@@ -177,6 +177,11 @@ const orderSchema = new mongoose.Schema(
       type: String,
       default: "",
     },
+    reorderOf: {
+      type: String,
+      default: null,
+      index: true,
+    },
     paidAt: {
       type: Date,
     },

@@ -52,6 +52,14 @@ const executeOrderFulfillment = async (orderId, paymentRecord = null, sourceLabe
     await paymentRecord.save();
   }
 
+  // 5. Auto-Generate Official GST Tax Invoice upon Prepaid Confirmation
+  try {
+    const { createInvoiceForOrder } = require("../Services/invoiceService");
+    await createInvoiceForOrder(order);
+  } catch (invErr) {
+    console.warn("[PaymentVerification] Auto-invoice generation note:", invErr.message);
+  }
+
   return order;
 };
 

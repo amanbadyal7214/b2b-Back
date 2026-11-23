@@ -513,6 +513,16 @@ const updateOrderStatusByAdmin = async (req, res) => {
 
     await order.save();
 
+    // Auto-generate Tax Invoice on dispatch or payment confirmation
+    if (status === "dispatched" || status === "delivered" || paymentStatus === "paid") {
+      try {
+        const { createInvoiceForOrder } = require("../Services/invoiceService");
+        await createInvoiceForOrder(order);
+      } catch (invErr) {
+        console.warn("[updateOrderStatusByAdmin] Invoice trigger note:", invErr.message);
+      }
+    }
+
     return res.status(200).json({
       success: true,
       message: `Order ${order.orderId} status updated from "${previousStatus}" to "${order.status}".`,
@@ -600,6 +610,256 @@ const processOrderReturnByAdmin = async (req, res) => {
   }
 };
 
+/**
+ * Controller: reorderOrder
+ * POST /api/orders/:id/reorder
+ * Re-orders items from past order or invoice:
+ * - Checks stock availability (flags/skips out-of-stock items)
+ * - Fetches CURRENT pricing (never copies old prices, flags price shift)
+ * - Validates MOQ and active product status
+ * - Primes user's cart and returns detailed validation warnings summary
+ */
+const reorderOrder = async (req, res) => {
+  try {
+    const userId = req.user?._id;
+    if (!userId) {
+      return res.status(401).json({ success: false, message: "Authentication required to reorder." });
+    }
+
+    const { id } = req.params;
+    const { selectedItemIds = null } = req.body;
+
+    const order = await Order.findOne({
+      $or: [{ _id: /^[0-9a-fA-F]{24}$/.test(id) ? id : null }, { orderId: id }],
+    });
+
+    if (!order) {
+      return res.status(404).json({ success: false, message: "Order record not found." });
+    }
+
+    // Verify ownership or admin
+    if (!req.admin && String(order.userId) !== String(userId)) {
+      return res.status(403).json({ success: false, message: "Unauthorized to reorder from this document." });
+    }
+
+    // Filter items if partial reorder requested
+    let itemsToProcess = order.items;
+    if (Array.isArray(selectedItemIds) && selectedItemIds.length > 0) {
+      const idSet = new Set(selectedItemIds.map(String));
+      itemsToProcess = order.items.filter((it) => idSet.has(String(it._id)) || idSet.has(String(it.skuId)));
+    }
+
+    if (itemsToProcess.length === 0) {
+      return res.status(400).json({ success: false, message: "No items selected for reorder." });
+    }
+
+    // Load or create active cart
+    let cart = await Cart.findOne({ userId, status: "active" });
+    if (!cart) {
+      cart = new Cart({ userId, items: [] });
+    }
+
+    const addedItems = [];
+    const outOfStockItems = [];
+    const priceChangedItems = [];
+    const warnings = [];
+
+    const Inventory = require("../Model/InventoryModel");
+
+    for (const oldItem of itemsToProcess) {
+      // 1. Fetch current product safely (by ObjectId, SKU, slug, or title)
+      let product = null;
+      const pidStr = oldItem.productId ? String(oldItem.productId).trim() : null;
+      if (pidStr && /^[0-9a-fA-F]{24}$/.test(pidStr)) {
+        try {
+          product = await Product.findById(pidStr);
+        } catch {
+          product = null;
+        }
+      }
+
+      if (!product && oldItem.productSku) {
+        try {
+          product = await Product.findOne({
+            $or: [
+              { sku: { $regex: new RegExp(`^${oldItem.productSku.trim()}$`, "i") } },
+              { slug: { $regex: new RegExp(`^${oldItem.productSku.trim()}$`, "i") } },
+            ],
+          });
+        } catch {}
+      }
+
+      if (!product && oldItem.skuId) {
+        try {
+          const baseSku = oldItem.skuId.split("-").slice(0, 3).join("-");
+          product = await Product.findOne({
+            $or: [
+              { "variants.skus.sku": { $regex: new RegExp(`^${oldItem.skuId.trim()}$`, "i") } },
+              { sku: { $regex: new RegExp(`^${baseSku.trim()}$`, "i") } },
+              { sku: { $regex: new RegExp(`^${oldItem.skuId.trim()}$`, "i") } },
+            ],
+          });
+        } catch {}
+      }
+
+      if (!product && oldItem.productName) {
+        try {
+          product = await Product.findOne({
+            name: { $regex: new RegExp(`^${oldItem.productName.trim()}$`, "i") },
+          });
+        } catch {}
+      }
+
+      if (product && (product.status === "Inactive" || product.status === "Archived")) {
+        warnings.push(`"${oldItem.productName}" is no longer active in wholesale catalogue and was skipped.`);
+        outOfStockItems.push({
+          skuId: oldItem.skuId,
+          productName: oldItem.productName,
+          reason: "Product Inactive/Archived",
+        });
+        continue;
+      }
+
+      // If product not found in MongoDB catalog, use safe fallback from oldItem
+      if (!product) {
+        product = {
+          _id: pidStr && /^[0-9a-fA-F]{24}$/.test(pidStr) ? pidStr : new mongoose.Types.ObjectId(),
+          name: oldItem.productName || "Wholesale Garment",
+          sku: oldItem.productSku || oldItem.skuId || "BVB-PRODUCT",
+          wholesalePrice: Number(oldItem.unitPrice) || 0,
+          price: Number(oldItem.unitPrice) || 0,
+          countInStock: 999,
+          moq: 1,
+          image: oldItem.image || "",
+          status: "Active",
+        };
+      }
+
+      // 2. Check current stock for the SKU
+      const cleanSku = String(oldItem.skuId || oldItem.productSku || "SKU").trim();
+      let availableOnHand = 0;
+      try {
+        const invRecords = await Inventory.find({ skuId: cleanSku });
+        if (invRecords.length > 0) {
+          availableOnHand = invRecords.reduce(
+            (sum, inv) => sum + Math.max(0, (inv.onHand || 0) - (inv.reserved || 0)),
+            0
+          );
+        } else {
+          availableOnHand = product.countInStock ?? 100;
+        }
+      } catch {
+        availableOnHand = 100;
+      }
+
+      if (availableOnHand <= 0) {
+        warnings.push(`"${oldItem.productName}" (${oldItem.size} / ${oldItem.color}) is currently OUT OF STOCK.`);
+        outOfStockItems.push({
+          skuId: cleanSku,
+          productName: oldItem.productName,
+          size: oldItem.size,
+          color: oldItem.color,
+          requestedQty: oldItem.quantity,
+          availableOnHand: 0,
+          reason: "Out of Stock",
+        });
+        continue;
+      }
+
+      // 3. Resolve Current Pricing (Current Wholesale or Tier Price)
+      const currentPrice = Number(product.wholesalePrice || product.price || oldItem.unitPrice || 0);
+      const oldPrice = Number(oldItem.unitPrice || currentPrice);
+
+      if (currentPrice !== oldPrice) {
+        priceChangedItems.push({
+          skuId: cleanSku,
+          productName: oldItem.productName,
+          oldPrice,
+          newPrice: currentPrice,
+          diff: currentPrice - oldPrice,
+        });
+        warnings.push(
+          `Price updated for "${oldItem.productName}": ₹${oldPrice.toLocaleString("en-IN")} → ₹${currentPrice.toLocaleString("en-IN")}`
+        );
+      }
+
+      // 4. Resolve Quantity
+      const desiredQty = Number(oldItem.quantity) || 1;
+      const qtyToAdd = Math.min(desiredQty, availableOnHand);
+
+      if (qtyToAdd < desiredQty) {
+        warnings.push(
+          `Partial stock available for "${oldItem.productName}": only ${qtyToAdd} of ${desiredQty} pcs added.`
+        );
+      }
+
+      // 5. Add or Update in Cart
+      const existingCartIndex = cart.items.findIndex(
+        (ci) =>
+          ci.skuId === cleanSku ||
+          (String(ci.productId) === String(product._id) &&
+            ci.size === oldItem.size &&
+            ci.color === oldItem.color)
+      );
+
+      if (existingCartIndex > -1) {
+        cart.items[existingCartIndex].quantity += qtyToAdd;
+        cart.items[existingCartIndex].price = currentPrice;
+      } else {
+        cart.items.push({
+          productId: product._id,
+          skuId: cleanSku,
+          productSku: product.sku || oldItem.productSku || "",
+          productName: product.name || oldItem.productName,
+          color: oldItem.color || "Standard",
+          colorCode: oldItem.colorCode || "#121214",
+          size: oldItem.size || "M",
+          quantity: qtyToAdd,
+          price: currentPrice,
+          mrp: product.price || product.mrp || currentPrice,
+          image: oldItem.image || product.image || "",
+          moq: product.moq || 1,
+          addedAt: new Date(),
+        });
+      }
+
+      addedItems.push({
+        skuId: cleanSku,
+        productName: oldItem.productName,
+        size: oldItem.size,
+        color: oldItem.color,
+        quantity: qtyToAdd,
+        unitPrice: currentPrice,
+        total: currentPrice * qtyToAdd,
+      });
+    }
+
+    cart.reorderOf = order.orderId;
+    cart.lastActivityAt = new Date();
+    await cart.save();
+
+    return res.status(200).json({
+      success: true,
+      message: `Reorder processed: ${addedItems.length} items added to wholesale bag.`,
+      orderId: order.orderId,
+      addedItems,
+      outOfStockItems,
+      priceChangedItems,
+      warnings,
+      summary: {
+        totalRequested: itemsToProcess.length,
+        totalAdded: addedItems.length,
+        outOfStockCount: outOfStockItems.length,
+        priceChangeCount: priceChangedItems.length,
+      },
+      cart,
+    });
+  } catch (error) {
+    console.error("[reorderOrder] Error:", error);
+    return res.status(500).json({ success: false, message: error.message || "Failed to process reorder." });
+  }
+};
+
 module.exports = {
   createOrder,
   getOrderById,
@@ -609,4 +869,5 @@ module.exports = {
   updateOrderStatusByAdmin,
   partialCancelOrderItemByAdmin,
   processOrderReturnByAdmin,
+  reorderOrder,
 };

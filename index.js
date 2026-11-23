@@ -23,6 +23,7 @@ const checkoutRoutes = require("./Routes/Checkoutroute");
 const orderRoutes = require("./Routes/Orderroute");
 const paymentRoutes = require("./Routes/Paymentroute");
 const inventoryRoutes = require("./Routes/Inventoryroute");
+const invoiceRoutes = require("./Routes/Invoiceroute");
 const featuredCollectionRoutes = require("./Routes/FeaturedCollectionroute");
 const { autoSeedPincodesIfEmpty } = require("./Controller/Pincodecontroller");
 const { bootstrapAllProductsInventory } = require("./Services/inventoryService");
@@ -161,6 +162,10 @@ app.use("/api/payment", paymentRoutes);
 // SKU Inventory Management, Stock Locks, Audit Movements & Multi-Warehouse Routes
 app.use("/api/inventory", inventoryRoutes);
 app.use("/api/warehouses", inventoryRoutes);
+
+// GST Tax Invoices, Credit Notes & E-Way Billing Documents
+app.use("/api/invoices", invoiceRoutes);
+app.use("/api/invoice", invoiceRoutes);
 
 // 404 Handler
 app.use((req, res) => {

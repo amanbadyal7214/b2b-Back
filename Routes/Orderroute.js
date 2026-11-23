@@ -8,6 +8,7 @@ const {
   updateOrderStatusByAdmin,
   partialCancelOrderItemByAdmin,
   processOrderReturnByAdmin,
+  reorderOrder,
 } = require("../Controller/Ordercontroller");
 const { verifyUserToken, optionalUserToken } = require("../Middleware/authMiddleware");
 
@@ -23,6 +24,10 @@ router.post("/admin/:id/return", processOrderReturnByAdmin);
 
 // Step 7: Create order from cart with server-verified prices & 15-min stock lock
 router.post("/", verifyUserToken, createOrder);
+
+// 1-Click Wholesale Reorder
+router.post("/:id/reorder", verifyUserToken, reorderOrder);
+router.post("/reorder/:id", verifyUserToken, reorderOrder);
 
 // Retailer / Customer order history
 router.get("/user", verifyUserToken, getUserOrders);

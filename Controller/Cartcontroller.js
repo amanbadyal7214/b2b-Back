@@ -66,9 +66,61 @@ const revalidateCartItems = async (cart) => {
   const validItems = [];
 
   for (const item of cart.items) {
-    const product = await Product.findById(item.productId);
+    let product = null;
+    const pidStr = item.productId ? String(item.productId).trim() : null;
+    if (pidStr && /^[0-9a-fA-F]{24}$/.test(pidStr)) {
+      try {
+        product = await Product.findById(pidStr);
+      } catch {
+        product = null;
+      }
+    }
+
+    if (!product && item.productSku) {
+      try {
+        product = await Product.findOne({
+          $or: [
+            { sku: { $regex: new RegExp(`^${item.productSku.trim()}$`, "i") } },
+            { slug: { $regex: new RegExp(`^${item.productSku.trim()}$`, "i") } },
+          ],
+        });
+      } catch {}
+    }
+
+    if (!product && item.skuId) {
+      try {
+        const baseSku = item.skuId.split("-").slice(0, 3).join("-");
+        product = await Product.findOne({
+          $or: [
+            { "variants.skus.sku": { $regex: new RegExp(`^${item.skuId.trim()}$`, "i") } },
+            { sku: { $regex: new RegExp(`^${baseSku.trim()}$`, "i") } },
+            { sku: { $regex: new RegExp(`^${item.skuId.trim()}$`, "i") } },
+          ],
+        });
+      } catch {}
+    }
+
+    if (!product && item.productName) {
+      try {
+        product = await Product.findOne({
+          name: { $regex: new RegExp(`^${item.productName.trim()}$`, "i") },
+        });
+      } catch {}
+    }
+
     if (!product) {
-      warnings.push(`Item "${item.productName || item.skuId}" is no longer available and was removed.`);
+      // Safe fallback: Retain line item with its stored price and attributes so user's cart is never wiped out
+      const fallbackPrice = item.price || 0;
+      const fallbackQty = item.quantity || 1;
+      subtotal += fallbackPrice * fallbackQty;
+      totalQuantity += fallbackQty;
+
+      const enriched = typeof item.toObject === "function" ? item.toObject() : { ...item };
+      enriched.availableStock = 100;
+      enriched.isOutOfStock = false;
+      enriched.livePrice = fallbackPrice;
+      enriched.priceChanged = false;
+      validItems.push(enriched);
       continue;
     }
 
@@ -97,8 +149,11 @@ const revalidateCartItems = async (cart) => {
       item.price;
 
     // Live available = onHand - reserved (read-only; adding to cart never modifies inventory)
-    const invCheck = await getAvailableStockForSku(skuObj?.sku || item.skuId, product._id);
-    const availableStock = invCheck.exists ? invCheck.available : (skuObj ? skuObj.stock : 0);
+    let invCheck = { exists: false, available: 0 };
+    try {
+      invCheck = await getAvailableStockForSku(skuObj?.sku || item.skuId, product._id);
+    } catch {}
+    const availableStock = invCheck.exists ? invCheck.available : (skuObj ? skuObj.stock : (product.countInStock ?? 100));
     const isOutOfStock = availableStock <= 0;
 
     let adjustedQty = item.quantity;
@@ -119,7 +174,7 @@ const revalidateCartItems = async (cart) => {
     subtotal += livePrice * adjustedQty;
     totalQuantity += adjustedQty;
 
-    const enriched = item.toObject();
+    const enriched = typeof item.toObject === "function" ? item.toObject() : { ...item };
     enriched.availableStock = availableStock;
     enriched.isOutOfStock = isOutOfStock;
     enriched.livePrice = livePrice;

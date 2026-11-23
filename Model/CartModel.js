@@ -86,6 +86,10 @@ const cartSchema = new mongoose.Schema(
       enum: ["active", "converted", "abandoned"],
       default: "active",
     },
+    reorderOf: {
+      type: String,
+      default: null,
+    },
     lastActivityAt: {
       type: Date,
       default: Date.now,

@@ -139,6 +139,23 @@ const userSchema = new mongoose.Schema(
       rebate: { type: String },
     },
 
+    // Wholesale Credit & Commercial Terms
+    creditProfile: {
+      creditLimit: { type: Number, default: 0 },
+      creditAvailable: { type: Number, default: 0 },
+      creditUsed: { type: Number, default: 0 },
+      paymentTerms: {
+        type: String,
+        enum: ["Prepaid", "Net 15", "Net 30", "Net 45", "COD"],
+        default: "Prepaid",
+      },
+      creditStatus: {
+        type: String,
+        enum: ["Good", "Warning", "Blocked"],
+        default: "Good",
+      },
+    },
+
     // Role & Clearance
     role: {
       type: String,

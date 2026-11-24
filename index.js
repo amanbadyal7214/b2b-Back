@@ -26,6 +26,7 @@ const inventoryRoutes = require("./Routes/Inventoryroute");
 const invoiceRoutes = require("./Routes/Invoiceroute");
 const featuredCollectionRoutes = require("./Routes/FeaturedCollectionroute");
 const blogRoutes = require("./Routes/Blogroute");
+const ourStoryRoutes = require("./Routes/OurStoryroute");
 const { autoSeedPincodesIfEmpty } = require("./Controller/Pincodecontroller");
 const { bootstrapAllProductsInventory } = require("./Services/inventoryService");
 const { startStockLockCron } = require("./Jobs/stockLockCron");
@@ -171,6 +172,9 @@ app.use("/api/invoice", invoiceRoutes);
 // Blog CMS, Textile Knowledge Engine & B2B Editorial Articles
 app.use("/api/blogs", blogRoutes);
 app.use("/api/blog", blogRoutes);
+
+// Our Story / Brand Heritage CMS
+app.use("/api/our-story", ourStoryRoutes);
 
 // 404 Handler
 app.use((req, res) => {

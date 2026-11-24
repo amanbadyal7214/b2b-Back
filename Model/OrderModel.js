@@ -121,6 +121,8 @@ const orderSchema = new mongoose.Schema(
       gstAmount: { type: Number, default: 0 },
       freightCost: { type: Number, default: 0 },
       grandTotal: { type: Number, required: true },
+      walletDebit: { type: Number, default: 0 },
+      payableTotal: { type: Number, default: 0 },
     },
     status: {
       type: String,
@@ -181,6 +183,22 @@ const orderSchema = new mongoose.Schema(
       type: String,
       default: null,
       index: true,
+    },
+    referredBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+      index: true,
+    },
+    referralId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Referral",
+      default: null,
+      index: true,
+    },
+    referralProcessed: {
+      type: Boolean,
+      default: false,
     },
     paidAt: {
       type: Date,

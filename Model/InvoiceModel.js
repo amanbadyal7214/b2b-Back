@@ -191,6 +191,7 @@ const invoiceSchema = new mongoose.Schema(
     totals: {
       taxableSubtotal: { type: Number, required: true },
       discountTotal: { type: Number, default: 0 },
+      rewardApplied: { type: Number, default: 0 },
       cgstTotal: { type: Number, default: 0 },
       sgstTotal: { type: Number, default: 0 },
       igstTotal: { type: Number, default: 0 },

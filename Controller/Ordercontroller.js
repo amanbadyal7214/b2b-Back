@@ -13,6 +13,13 @@ const {
   partialCancelOrderItem,
   processOrderReturn,
 } = require("../Services/inventoryService");
+const {
+  getReferralConfig,
+  getWalletSummary,
+  debitForOrder,
+  reverseDebitForOrder,
+  qualifyReferralForOrder,
+} = require("../Services/rewardLedgerService");
 
 /**
  * Routine: Release expired stock locks (delegates to atomic inventoryService)
@@ -51,6 +58,8 @@ const createOrder = async (req, res) => {
       shippingAddress: inlineAddress,
       paymentMethod = "razorpay",
       notes = "",
+      useRewardBalance = false,
+      rewardAmountToUse = 0,
     } = req.body;
 
     // 1. Resolve Shipping Address
@@ -170,6 +179,34 @@ const createOrder = async (req, res) => {
     const randomSuffix = Math.floor(100000 + Math.random() * 900000);
     const orderId = `BVB-PO-${randomSuffix}`;
 
+    // 5.5 Optional Rewards Wallet Balance Debit
+    let walletDebit = 0;
+    let debitedOrderId = null;
+    if (useRewardBalance) {
+      try {
+        const refConfig = await getReferralConfig();
+        const wallet = await getWalletSummary(userId);
+        const maxRedeemable = Math.round((grandTotal * (refConfig.maxOrderRedemptionPercent || 20)) / 100);
+        const desiredDebit = rewardAmountToUse > 0 ? Number(rewardAmountToUse) : maxRedeemable;
+        const actualDebit = Math.min(wallet.availableBalance, maxRedeemable, desiredDebit);
+
+        if (actualDebit > 0) {
+          await debitForOrder({
+            userId,
+            amount: actualDebit,
+            orderId,
+            note: `Redeemed on Wholesale Order ${orderId}`,
+          });
+          walletDebit = actualDebit;
+          debitedOrderId = orderId;
+        }
+      } catch (walletErr) {
+        console.warn("[createOrder] Wallet debit note:", walletErr.message);
+      }
+    }
+
+    const payableTotal = Math.max(0, grandTotal - walletDebit);
+
     // 6. Set 15 Minute Stock Lock Expiration
     const stockLockedUntil = new Date(Date.now() + DEFAULT_LOCK_MINUTES * 60 * 1000);
 
@@ -240,6 +277,8 @@ const createOrder = async (req, res) => {
         gstAmount,
         freightCost,
         grandTotal,
+        walletDebit,
+        payableTotal,
       },
       status: "pending",
       paymentStatus: "unpaid",
@@ -257,6 +296,13 @@ const createOrder = async (req, res) => {
 
     await order.save();
     reservedOrderId = null; // Persisted successfully
+
+    // Check if buyer was referred and qualify the referral
+    try {
+      await qualifyReferralForOrder(order, req.user);
+    } catch (qualifyErr) {
+      console.warn("[createOrder] Referral qualification note:", qualifyErr?.message);
+    }
 
     return res.status(201).json({
       success: true,
@@ -279,6 +325,15 @@ const createOrder = async (req, res) => {
     // Safety net: if stock was reserved but saving Order failed, release locks immediately
     if (reservedOrderId) {
       await releaseStockForOrder(reservedOrderId, "Order persistence failure rollback").catch(() => {});
+    }
+    // Restitution rollback: if wallet was debited but order failed, reverse the debit
+    if (debitedOrderId && walletDebit > 0) {
+      await reverseDebitForOrder({
+        userId,
+        amount: walletDebit,
+        orderId: debitedOrderId,
+        reason: "Order creation failure rollback",
+      }).catch(() => {});
     }
     console.error("[createOrder] Error:", error);
     return res.status(500).json({
@@ -483,6 +538,18 @@ const updateOrderStatusByAdmin = async (req, res) => {
             byName: req.admin?.name || "Administrator",
           }
         );
+
+        // Restitution: Refund any debited rewards wallet balance
+        if (order.pricing?.walletDebit > 0) {
+          await reverseDebitForOrder({
+            userId: order.userId,
+            amount: order.pricing.walletDebit,
+            orderId: order.orderId,
+            reason: `Order ${order.orderId} cancelled by Administrator. Wallet credit refunded.`,
+          }).catch((revErr) => {
+            console.warn("[updateOrderStatusByAdmin] Wallet refund note:", revErr?.message);
+          });
+        }
       }
     }
 

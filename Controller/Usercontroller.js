@@ -2,6 +2,8 @@ const jwt = require("jsonwebtoken");
 const mongoose = require("mongoose");
 const User = require("../Model/UserModel");
 const Order = require("../Model/OrderModel");
+const Referral = require("../Model/ReferralModel");
+const { checkAntiAbuse, getReferralConfig } = require("../Services/rewardLedgerService");
 
 /**
  * Helper to compute discount tier and assigned slab from order volume string
@@ -246,6 +248,53 @@ const registerUser = async (req, res) => {
     });
 
     await newUser.save();
+
+    // Process Partner Referral Code if supplied during registration
+    const incomingRefCode = (req.body.referralCode || req.body.ref || req.query.ref || "").trim().toUpperCase();
+    if (incomingRefCode) {
+      try {
+        const referrer = await User.findOne({ referralCode: incomingRefCode });
+        if (referrer && String(referrer._id) !== String(newUser._id)) {
+          const clientIp = req.ip || req.headers["x-forwarded-for"] || "";
+          const antiAbuse = await checkAntiAbuse(
+            referrer,
+            {
+              phone: resolvedPhone,
+              email: resolvedEmail,
+              gstin: newUser.gstin,
+              pan: req.body.pan || "",
+            },
+            clientIp
+          );
+
+          newUser.referredBy = referrer._id;
+          newUser.referredByCode = incomingRefCode;
+          newUser.registrationIp = clientIp;
+          await newUser.save();
+
+          const refConfig = await getReferralConfig();
+          await Referral.create({
+            referralCode: incomingRefCode,
+            referrerId: referrer._id,
+            referrerName: referrer.ownerName || referrer.name,
+            referrerStoreName: referrer.storeName || referrer.companyName || referrer.name,
+            referredId: newUser._id,
+            referredName: newUser.name,
+            referredStoreName: newUser.storeName || newUser.companyName || newUser.name,
+            status: "pending",
+            rewardAmount: refConfig.referrerRewardAmount,
+            refereeRewardAmount: refConfig.refereeRewardAmount,
+            fraudFlags: antiAbuse.flags || [],
+            isFraudFlagged: antiAbuse.isFraudFlagged,
+            notes: antiAbuse.isFraudFlagged
+              ? `Automated security note: ${antiAbuse.flags.map((f) => f.details).join("; ")}`
+              : "Registered via partner referral link.",
+          });
+        }
+      } catch (refErr) {
+        console.warn("[registerUser] Referral attachment note:", refErr?.message);
+      }
+    }
 
     const token = generateUserToken(newUser);
 

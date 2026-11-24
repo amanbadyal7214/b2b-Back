@@ -27,6 +27,7 @@ const invoiceRoutes = require("./Routes/Invoiceroute");
 const featuredCollectionRoutes = require("./Routes/FeaturedCollectionroute");
 const blogRoutes = require("./Routes/Blogroute");
 const ourStoryRoutes = require("./Routes/OurStoryroute");
+const referralRoutes = require("./Routes/Referralroute");
 const { autoSeedPincodesIfEmpty } = require("./Controller/Pincodecontroller");
 const { bootstrapAllProductsInventory } = require("./Services/inventoryService");
 const { startStockLockCron } = require("./Jobs/stockLockCron");
@@ -175,6 +176,12 @@ app.use("/api/blog", blogRoutes);
 
 // Our Story / Brand Heritage CMS
 app.use("/api/our-story", ourStoryRoutes);
+
+// Referral Marketing, Partner Program & Immutable Rewards Wallet Ledger
+app.use("/api/referrals", referralRoutes);
+app.use("/api/referral", referralRoutes);
+app.use("/api/rewards", referralRoutes);
+app.use("/api/reward", referralRoutes);
 
 // 404 Handler
 app.use((req, res) => {

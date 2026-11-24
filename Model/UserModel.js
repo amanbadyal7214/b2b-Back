@@ -200,6 +200,50 @@ const userSchema = new mongoose.Schema(
     lastLogin: {
       type: Date,
     },
+
+    // Referral & Rewards Wallet
+    referralCode: {
+      type: String,
+      unique: true,
+      sparse: true,
+      uppercase: true,
+      trim: true,
+      index: true,
+    },
+    referredBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+      index: true,
+    },
+    referredByCode: {
+      type: String,
+      default: "",
+      uppercase: true,
+      trim: true,
+    },
+    // Cached available wallet balance (authoritatively reconciled against RewardLedger)
+    walletBalance: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    // Cached pending rewards awaiting order return window
+    pendingRewardBalance: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    registrationIp: {
+      type: String,
+      default: "",
+    },
+    pan: {
+      type: String,
+      default: "",
+      uppercase: true,
+      trim: true,
+    },
   },
   {
     timestamps: true,
@@ -234,6 +278,16 @@ userSchema.pre("save", async function () {
       status: "active",
       rebate: this.assignedSlab || "",
     };
+  }
+
+  // Auto-generate unique referral code if missing
+  if (!this.referralCode) {
+    const rawClean = (this.ownerName || this.name || "BVB")
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, "")
+      .substring(0, 6) || "BVB";
+    const randFour = Math.floor(1000 + Math.random() * 9000);
+    this.referralCode = `REF-${rawClean}${randFour}`;
   }
 
   // Sample kit state

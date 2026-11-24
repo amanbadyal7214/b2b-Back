@@ -354,6 +354,7 @@ async function createInvoiceForOrder(orderOrId, options = {}) {
     totals: {
       taxableSubtotal: grossTaxable,
       discountTotal: Number(order.pricing?.discountAmount) || 0,
+      rewardApplied: Number(order.pricing?.walletDebit) || 0,
       cgstTotal: totalCgst,
       sgstTotal: totalSgst,
       igstTotal: totalIgst,

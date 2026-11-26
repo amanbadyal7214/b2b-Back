@@ -92,9 +92,14 @@ const getMyReferrals = async (req, res) => {
     const maskedList = referrals.map((r) => ({
       _id: r._id,
       storeName: maskName(r.referredStoreName || r.referredName),
+      referredStoreName: maskName(r.referredStoreName || r.referredName),
+      referredId: r.referredId,
       status: r.status,
       qualifiedOrderValue: r.qualifiedOrderValue,
+      firstOrderValue: r.qualifiedOrderValue,
       rewardAmount: r.rewardAmount,
+      referrerRewardAmount: r.rewardAmount,
+      createdAt: r.createdAt,
       registeredAt: r.createdAt,
       qualifiedAt: r.qualifiedAt,
       creditedAt: r.creditedAt,
@@ -102,10 +107,22 @@ const getMyReferrals = async (req, res) => {
       notes: r.status === "pending" ? "Awaiting first qualifying order" : r.notes,
     }));
 
+    const summary = {
+      total: referrals.length,
+      pending: referrals.filter((r) => r.status === "pending").length,
+      qualified: referrals.filter((r) => r.status === "qualified").length,
+      credited: referrals.filter((r) => r.status === "credited").length,
+      reversed: referrals.filter((r) => r.status === "reversed").length,
+      totalEarned: referrals
+        .filter((r) => r.status === "credited")
+        .reduce((sum, r) => sum + (r.rewardAmount || 0), 0),
+    };
+
     return res.status(200).json({
       success: true,
       referrals: maskedList,
       totalCount: referrals.length,
+      summary,
     });
   } catch (error) {
     console.error("[getMyReferrals] Error:", error);
@@ -331,8 +348,8 @@ const overrideReferralByAdmin = async (req, res) => {
     const { id } = req.params;
     const { action, reason = "" } = req.body;
 
-    if (!["approved", "blocked"].includes(action)) {
-      return res.status(400).json({ success: false, message: "Action must be 'approved' or 'blocked'." });
+    if (!["approved", "blocked", "force_credit"].includes(action)) {
+      return res.status(400).json({ success: false, message: "Action must be 'approved', 'blocked', or 'force_credit'." });
     }
 
     const referral = await Referral.findById(id);
@@ -350,6 +367,36 @@ const overrideReferralByAdmin = async (req, res) => {
 
     if (action === "blocked") {
       referral.status = "blocked";
+    } else if (action === "force_credit" || (action === "approved" && referral.status !== "credited")) {
+      // Force credit reward immediately without waiting for return window!
+      const config = await getReferralConfig();
+      const expiresAt = new Date(Date.now() + config.rewardExpiryDays * 24 * 60 * 60 * 1000);
+
+      const referrerEntry = await creditReward({
+        userId: referral.referrerId,
+        amount: referral.rewardAmount || config.referrerRewardAmount || 1000,
+        source: "referral_reward",
+        referenceId: referral._id.toString(),
+        note: `Admin approved referral reward for boutique ${referral.referredStoreName || referral.referredName} (Order: ${referral.qualifiedOrderId || 'Manual Verification'})`,
+        expiresAt,
+        createdBy: "admin",
+      });
+
+      if (referral.refereeRewardAmount > 0) {
+        await creditReward({
+          userId: referral.referredId,
+          amount: referral.refereeRewardAmount || config.refereeRewardAmount || 500,
+          source: "referee_welcome_bonus",
+          referenceId: referral._id.toString(),
+          note: `Admin approved welcome bonus for joining via partner referral code ${referral.referralCode}`,
+          expiresAt,
+          createdBy: "admin",
+        });
+      }
+
+      referral.status = "credited";
+      referral.creditedAt = new Date();
+      referral.rewardLedgerEntryId = referrerEntry?.entryId || "";
     } else if (action === "approved" && referral.status === "blocked") {
       referral.status = referral.qualifiedOrderId ? "qualified" : "pending";
     }
@@ -358,6 +405,9 @@ const overrideReferralByAdmin = async (req, res) => {
 
     // Reconcile referrer wallet
     await getWalletSummary(referral.referrerId);
+    if (referral.referredId) {
+      await getWalletSummary(referral.referredId);
+    }
 
     return res.status(200).json({
       success: true,

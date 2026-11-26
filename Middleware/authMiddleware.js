@@ -149,9 +149,38 @@ const optionalUserToken = async (req, res, next) => {
   }
 };
 
+/**
+ * Middleware to check if admin has access to a specific module (RBAC)
+ */
+const requireModule = (moduleName) => {
+  return (req, res, next) => {
+    if (!req.admin) {
+      return res.status(401).json({
+        success: false,
+        message: "Authentication required.",
+      });
+    }
+
+    if (req.admin.role === "Super Administrator") {
+      return next();
+    }
+
+    const modules = req.admin.modules || [];
+    if (!modules.includes(moduleName)) {
+      return res.status(403).json({
+        success: false,
+        message: `Access denied. You do not have permission to access the '${moduleName}' module.`,
+      });
+    }
+
+    next();
+  };
+};
+
 module.exports = {
   verifyAdminToken,
   requireRole,
+  requireModule,
   verifyUserToken,
   optionalUserToken,
 };

@@ -3,7 +3,10 @@ const router = express.Router();
 const {
   adminAccess,
   getAdminProfile,
+  getAllAdmins,
   createAdmin,
+  updateAdmin,
+  deleteAdmin,
 } = require("../Controller/Admincontroller");
 const { verifyAdminToken, requireRole } = require("../Middleware/authMiddleware");
 
@@ -34,6 +37,14 @@ router.post("/create", async (req, res, next) => {
     next(err);
   }
 });
+
+// Staff & RBAC Management Endpoints
+router.get("/users", verifyAdminToken, getAllAdmins);
+router.get("/staff", verifyAdminToken, getAllAdmins);
+router.put("/users/:id", verifyAdminToken, updateAdmin);
+router.put("/staff/:id", verifyAdminToken, updateAdmin);
+router.delete("/users/:id", verifyAdminToken, deleteAdmin);
+router.delete("/staff/:id", verifyAdminToken, deleteAdmin);
 
 // Protected routes
 router.get("/profile", verifyAdminToken, getAdminProfile);

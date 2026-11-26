@@ -70,6 +70,18 @@ const adminAccess = async (req, res) => {
       ? process.env.JWT_EXPIRES_IN.trim()
       : "1d";
 
+    const defaultAllModules = [
+      "orders",
+      "products",
+      "inventory",
+      "retailers",
+      "invoices",
+      "pincodes",
+      "blog",
+      "referrals",
+      "roles",
+    ];
+
     const payload = {
       id: admin._id,
       email: admin.email,
@@ -77,6 +89,7 @@ const adminAccess = async (req, res) => {
       role: admin.role,
       clearance: admin.clearance,
       badge: admin.badge,
+      modules: admin.role === "Super Administrator" ? defaultAllModules : (admin.modules && admin.modules.length > 0 ? admin.modules : defaultAllModules),
     };
 
     const token = jwt.sign(payload, secret, { expiresIn });
@@ -95,6 +108,7 @@ const adminAccess = async (req, res) => {
         role: admin.role,
         clearance: admin.clearance,
         badge: admin.badge,
+        modules: payload.modules,
         loginTime: admin.lastLogin,
       },
     });
@@ -134,13 +148,58 @@ const getAdminProfile = async (req, res) => {
   }
 };
 
+const ALL_AVAILABLE_MODULES = [
+  "orders",
+  "products",
+  "inventory",
+  "retailers",
+  "invoices",
+  "pincodes",
+  "blog",
+  "referrals",
+  "roles",
+];
+
+/**
+ * Controller: getAllAdmins
+ * Returns all administrator and staff accounts with their assigned modules
+ */
+const getAllAdmins = async (req, res) => {
+  try {
+    const admins = await Admin.find().select("-password").sort({ createdAt: -1 });
+    return res.status(200).json({
+      success: true,
+      admins: admins.map((a) => ({
+        id: a._id,
+        _id: a._id,
+        name: a.name,
+        email: a.email,
+        role: a.role,
+        clearance: a.clearance,
+        badge: a.badge,
+        modules: a.role === "Super Administrator" ? ALL_AVAILABLE_MODULES : (a.modules && a.modules.length > 0 ? a.modules : ALL_AVAILABLE_MODULES),
+        isActive: a.isActive,
+        lastLogin: a.lastLogin,
+        createdAt: a.createdAt,
+      })),
+    });
+  } catch (error) {
+    console.error("[getAllAdmins] Error fetching staff accounts:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to retrieve administrator directory.",
+      error: error.message,
+    });
+  }
+};
+
 /**
  * Controller: createAdmin
- * Provisions a new real administrator account in MongoDB
+ * Provisions a new real administrator account in MongoDB with specific module access
  */
 const createAdmin = async (req, res) => {
   try {
-    const { name, email, password, role, clearance, badge } = req.body;
+    const { name, email, password, role, clearance, badge, modules } = req.body;
 
     if (!name || !email || !password) {
       return res.status(400).json({
@@ -161,9 +220,14 @@ const createAdmin = async (req, res) => {
 
     // First account created in system gets Super Administrator role
     const totalAdmins = await Admin.countDocuments();
-    const assignedRole = totalAdmins === 0 ? "Super Administrator" : (role || "Admin");
-    const assignedClearance = totalAdmins === 0 ? "Tier 1 • Full Governance" : (clearance || "Tier 2 • Department Governance");
-    const assignedBadge = totalAdmins === 0 ? "Super Admin" : (badge || "Admin");
+    const isFirst = totalAdmins === 0;
+    const assignedRole = isFirst ? "Super Administrator" : (role || "Admin");
+    const assignedClearance = isFirst ? "Tier 1 • Full Governance" : (clearance || "Tier 2 • Department Governance");
+    const assignedBadge = isFirst ? "Super Admin" : (badge || "Staff");
+
+    const assignedModules = isFirst || assignedRole === "Super Administrator"
+      ? ALL_AVAILABLE_MODULES
+      : (Array.isArray(modules) && modules.length > 0 ? modules : ["orders", "products"]);
 
     const newAdmin = await Admin.create({
       name: name.trim(),
@@ -172,6 +236,8 @@ const createAdmin = async (req, res) => {
       role: assignedRole,
       clearance: assignedClearance,
       badge: assignedBadge,
+      modules: assignedModules,
+      isActive: true,
     });
 
     return res.status(201).json({
@@ -179,11 +245,14 @@ const createAdmin = async (req, res) => {
       message: "Administrator account provisioned successfully.",
       admin: {
         id: newAdmin._id,
+        _id: newAdmin._id,
         name: newAdmin.name,
         email: newAdmin.email,
         role: newAdmin.role,
         clearance: newAdmin.clearance,
         badge: newAdmin.badge,
+        modules: newAdmin.modules,
+        isActive: newAdmin.isActive,
       },
     });
   } catch (error) {
@@ -196,9 +265,120 @@ const createAdmin = async (req, res) => {
   }
 };
 
+/**
+ * Controller: updateAdmin
+ * Updates role, assigned module permissions, or active status of staff user
+ */
+const updateAdmin = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, role, modules, isActive, password, clearance, badge } = req.body;
+
+    const admin = await Admin.findById(id);
+    if (!admin) {
+      return res.status(404).json({
+        success: false,
+        message: "Administrator account not found.",
+      });
+    }
+
+    if (name) admin.name = name.trim();
+    if (role) admin.role = role.trim();
+    if (clearance) admin.clearance = clearance.trim();
+    if (badge) admin.badge = badge.trim();
+    if (typeof isActive === "boolean") admin.isActive = isActive;
+
+    if (Array.isArray(modules)) {
+      admin.modules = admin.role === "Super Administrator" ? ALL_AVAILABLE_MODULES : modules;
+    }
+
+    if (password && password.trim().length >= 6) {
+      admin.password = password;
+    }
+
+    await admin.save();
+
+    return res.status(200).json({
+      success: true,
+      message: "Administrator permissions updated successfully.",
+      admin: {
+        id: admin._id,
+        _id: admin._id,
+        name: admin.name,
+        email: admin.email,
+        role: admin.role,
+        clearance: admin.clearance,
+        badge: admin.badge,
+        modules: admin.modules,
+        isActive: admin.isActive,
+      },
+    });
+  } catch (error) {
+    console.error("[updateAdmin] Error updating administrator:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to update administrator account.",
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * Controller: deleteAdmin
+ * Removes a staff/sub-admin account with safety guards
+ */
+const deleteAdmin = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (req.admin && String(req.admin._id) === String(id)) {
+      return res.status(400).json({
+        success: false,
+        message: "Security restriction: You cannot delete your own active administrator account.",
+      });
+    }
+
+    const admin = await Admin.findById(id);
+    if (!admin) {
+      return res.status(404).json({
+        success: false,
+        message: "Administrator account not found.",
+      });
+    }
+
+    if (admin.role === "Super Administrator") {
+      const superCount = await Admin.countDocuments({ role: "Super Administrator" });
+      if (superCount <= 1) {
+        return res.status(400).json({
+          success: false,
+          message: "Cannot delete the sole Super Administrator account of the platform.",
+        });
+      }
+    }
+
+    await Admin.findByIdAndDelete(id);
+
+    return res.status(200).json({
+      success: true,
+      message: `Administrator "${admin.name}" removed successfully.`,
+    });
+  } catch (error) {
+    console.error("[deleteAdmin] Error deleting administrator:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to remove administrator account.",
+      error: error.message,
+    });
+  }
+};
+
 module.exports = {
   adminAccess,
   adminLogin: adminAccess,
   getAdminProfile,
+  getAllAdmins,
   createAdmin,
+  updateAdmin,
+  deleteAdmin,
+  ALL_AVAILABLE_MODULES,
 };

@@ -23,14 +23,8 @@ const adminSchema = new mongoose.Schema(
     },
     role: {
       type: String,
-      enum: [
-        "Super Administrator",
-        "Operations & Logistics Lead",
-        "Head of Wholesale Accounts",
-        "Admin",
-        "Staff",
-      ],
       default: "Super Administrator",
+      trim: true,
     },
     clearance: {
       type: String,
@@ -39,6 +33,21 @@ const adminSchema = new mongoose.Schema(
     badge: {
       type: String,
       default: "Super Admin",
+    },
+    // Granular Module-Level Permissions (RBAC)
+    modules: {
+      type: [String],
+      default: [
+        "orders",
+        "products",
+        "inventory",
+        "retailers",
+        "invoices",
+        "pincodes",
+        "blog",
+        "referrals",
+        "roles",
+      ],
     },
     isActive: {
       type: Boolean,

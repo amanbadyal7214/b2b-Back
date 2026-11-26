@@ -28,6 +28,8 @@ const featuredCollectionRoutes = require("./Routes/FeaturedCollectionroute");
 const blogRoutes = require("./Routes/Blogroute");
 const ourStoryRoutes = require("./Routes/OurStoryroute");
 const referralRoutes = require("./Routes/Referralroute");
+const announcementRoutes = require("./Routes/Announcementroute");
+const contactRoutes = require("./Routes/Contactroute");
 const { autoSeedPincodesIfEmpty } = require("./Controller/Pincodecontroller");
 const { bootstrapAllProductsInventory } = require("./Services/inventoryService");
 const { startStockLockCron } = require("./Jobs/stockLockCron");
@@ -177,11 +179,20 @@ app.use("/api/blog", blogRoutes);
 // Our Story / Brand Heritage CMS
 app.use("/api/our-story", ourStoryRoutes);
 
+// Top Announcement Banner Ticker CMS
+app.use("/api/announcements", announcementRoutes);
+app.use("/api/announcement", announcementRoutes);
+
 // Referral Marketing, Partner Program & Immutable Rewards Wallet Ledger
 app.use("/api/referrals", referralRoutes);
 app.use("/api/referral", referralRoutes);
 app.use("/api/rewards", referralRoutes);
 app.use("/api/reward", referralRoutes);
+
+// Wholesale Inquiries & Contact Desk CMS
+app.use("/api/contact", contactRoutes);
+app.use("/api/contacts", contactRoutes);
+app.use("/api/inquiries", contactRoutes);
 
 // 404 Handler
 app.use((req, res) => {

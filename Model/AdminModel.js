@@ -42,6 +42,7 @@ const adminSchema = new mongoose.Schema(
         "products",
         "inventory",
         "retailers",
+        "inquiries",
         "invoices",
         "pincodes",
         "blog",
